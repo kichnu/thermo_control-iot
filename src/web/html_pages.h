@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-extern const char* LOGIN_HTML;
-extern const char* DASHBOARD_HTML;
+// TODO: Etap 5b — dashboard HTML z Chart.js (embedded ~60KB)
+const char* getDashboardHtml();
 
-#endif
+#endif // HTML_PAGES_H

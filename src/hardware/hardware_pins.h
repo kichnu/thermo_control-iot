@@ -1,42 +1,51 @@
 #ifndef HARDWARE_PINS_H
 #define HARDWARE_PINS_H
 
-  // ============================================================
-  // SEEED STUDIO ESP32 C6 — Pin Mapping
-  // ============================================================
-  //
-  //  Top edge pads: GND ─ USB_D- ─ USB_D+ ─ GPIO 0 (BOOT strap) ─ GPIO 3 (strap) ─ GPIO 21
-  //
-  //  Piny do unikania dla czujników:
-  //    GPIO 0  — BOOT strap (LOW podczas boot = tryb Download)
-  //    GPIO 2  — JTAG MTDO (wyjście z chipa) + połączenie PCB Seeed → stały LOW ~2.62V
-  //    GPIO 21 — podłączony do VBAT na PCB Seeed (3.8V) → nie nadaje się jako wejście logiczne 3.3V
-  //    GPIO 16 — UART0 TX  (chip aktywnie wystawia dane → fałszywe odczyty czujnika)
-  //    GPIO 17 — UART0 RX  (input, mniej groźny, ale może zakłócać UART)
-  //
-  //                                                      ┌─────────────────────┐
-  //                                           GPIO 0 ────┤ (BOOT strap, wolny) ├──── VBUS (5V)
-  //                   WATER_SENSOR_PIN (nowy) GPIO 1 ────┤ (JTAG MTDI, input)  ├──── GND
-  //                                 (UNIKAJ!) GPIO 2 ────┤ JTAG MTDO+PCB=2.62V ├──── 3V3  (OUT)
-  //                      (UNIKAJ!) RESET_PIN GPIO 21 ────┤ PCB=VBAT=3.8V       ├──── GPIO 18  ATO_PUMP_RELAY_PIN
-  //               AVAILABLE_WATER_SENSOR_PIN GPIO 22 ────┤                     ├──── GPIO 20  I2C_SCL_PIN
-  //                               BUZZER_PIN GPIO 23 ────┤                     ├──── GPIO 19  I2C_SDA_PIN
-  //                                          GPIO 17 ────┤  (UART RX, OK)      ├──── GPIO 16 
-  //                                                      └─────────────────────┘
-  //
-  // ============================================================
+// ============================================================
+// SEEED XIAO ESP32-C3 — Thermo Control Pin Mapping
+// ============================================================
+//
+//                         ┌─────────────────────────┐
+//                         │       [USB-C]            │
+//                         │                          │
+//               GND ──────┤ GND              GND ────┤
+//                5V ──────┤ 5V              3V3 ─────┤
+//               3V3 ──────┤ 3V3 (in)        RST ─────┤
+//           NC (wolny) ───┤ D0/GPIO2   GPIO10/D10 ────┤ NC (wolny)
+// SSR grzałka  ◄───────── ┤ D1/GPIO3    GPIO9/D9  ────┤ NC (wolny)
+// Fan PWM      ◄───────── ┤ D2/GPIO4    GPIO8/D8  ────┤ NC (wolny)
+// Energy pulse ─────────► ┤ D3/GPIO5   GPIO20/D7  ────┤ Provisioning btn
+// I2C SDA      ◄─────────►┤ D4/GPIO6   GPIO21/D6  ────┤ Buzzer
+// I2C SCL      ◄─────────►┤ D5/GPIO7              │
+//                         └─────────────────────────┘
+//
+// I2C bus (GPIO6/7): DS3231 RTC (0x68) + MB85RC256V FRAM (0x50) + STS35 (0x4B)
+//
+// GPIO 18/19 = USB D+/D- — niedostępne
+// GPIO 2/8/9/10 = wolne, zarezerwowane na przyszłość
+// ============================================================
 
-// ============== TOP-OFF SYSTEM ==============
-#define ATO_PUMP_RELAY_PIN 18         // Pompa top-off (LOW = ON, active-LOW relay)
-#define WATER_SENSOR_PIN 1           // Czujnik pływakowy (INPUT_PULLUP, active LOW) — GPIO 1 (JTAG MTDI, input = bezpieczny)
-#define AVAILABLE_WATER_SENSOR_PIN 22 // Czujnik zbiornika wody (INPUT_PULLUP, active LOW)
+// ============== ACTUATORS ==============
+#define HEATER_SSR_PIN      3   // SSR grzałki (active LOW: LOW = grzeje)
+#define FAN_PWM_PIN         4   // Iduino ST1168 MOSFET PWM (HIGH = max prędkość)
 
-// ============== I2C (DS3231 RTC + FRAM MB85RC256V) ==============
-#define I2C_SDA_PIN 19
-#define I2C_SCL_PIN 20
+// ============== I2C (DS3231 RTC + MB85RC256V FRAM + STS35 temp) ==============
+#define I2C_SDA_PIN         6
+#define I2C_SCL_PIN         7
+#define STS35_I2C_ADDR      0x4B  // STS35 Sensirion (ADDR pin = VDD)
+
+// ============== ENERGY METER ==============
+#define ENERGY_PULSE_PIN    5   // Open-collector input, przez optocoupler PC817
+                                // INPUT_PULLUP, ISR na FALLING
 
 // ============== SYSTEM ==============
-#define RESET_PIN 21    // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
-#define BUZZER_PIN 23  // Buzzer (LOW = ON, active LOW)
+#define BUZZER_PIN         21   // Buzzer (HIGH = ON)
+#define RESET_PIN          20   // Provisioning button (INPUT_PULLUP, active LOW, hold 5s)
+
+// ============== WOLNE (rezerwa) ==============
+// GPIO 2  (D0) — wolny
+// GPIO 8  (D8) — wolny
+// GPIO 9  (D9) — wolny
+// GPIO 10 (D10) — wolny
 
 #endif // HARDWARE_PINS_H
