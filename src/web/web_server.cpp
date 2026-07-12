@@ -9,50 +9,30 @@
 
 AsyncWebServer server(80);
 
+ArRequestHandlerFunction requireAuth(ArRequestHandlerFunction fn) {
+    return [fn](AsyncWebServerRequest* request) {
+        if (!checkAuthentication(request)) {
+            request->send(401, "application/json", "{\"error\":\"unauthorized\"}");
+            return;
+        }
+        fn(request);
+    };
+}
+
 void initWebServer() {
     // Static pages
     server.on("/", HTTP_GET, handleDashboard);
     server.on("/login", HTTP_GET, handleLoginPage);
-    
+
     // Authentication
     server.on("/api/login", HTTP_POST, handleLogin);
     server.on("/api/logout", HTTP_POST, handleLogout);
-    
-    // API endpoints
-    server.on("/api/status", HTTP_GET, handleStatus);
-    server.on("/api/pump/direct-on", HTTP_POST, handleDirectPumpOn);
-    server.on("/api/pump/direct-off", HTTP_POST, handleDirectPumpOff);
-    server.on("/api/pump/calibration-on", HTTP_POST, handleCalibrationOn);
-    server.on("/api/pump/calibration-off", HTTP_POST, handleCalibrationOff);
-    server.on("/api/pump/stop", HTTP_POST, handlePumpStop);
-    server.on("/api/pump-settings", HTTP_GET | HTTP_POST, handlePumpSettings);
-    
-    server.on("/api/system-toggle", HTTP_GET | HTTP_POST, handleSystemToggle);
-    
-    // Statistics endpoints
-    server.on("/api/reset-statistics", HTTP_POST, handleResetStatistics);
-    server.on("/api/get-statistics", HTTP_GET, handleGetStatistics);
-
-    server.on("/api/daily-volume", HTTP_GET, handleGetDailyVolume);
-    server.on("/api/reset-daily-volume", HTTP_POST, handleResetDailyVolume);
-
-    // Fill Water Max / Dose endpoints
-    server.on("/api/fill-water-max", HTTP_GET, handleGetFillWaterMax);
-    server.on("/api/set-fill-water-max", HTTP_POST, handleSetFillWaterMax);  // daily_limit_ml
-    server.on("/api/set-dose", HTTP_POST, handleSetDose);                    // dose_ml
-
-    // Cycle History endpoints
-    server.on("/api/cycle-history",       HTTP_GET,  handleGetCycleHistory);
-    server.on("/api/clear-cycle-history", HTTP_POST, handleClearCycleHistory);
-
-    // System reset
-    server.on("/api/system-reset", HTTP_POST, handleSystemReset);
-
-    // Algorithm config (EMA alpha/clamp, P1/P2, zone thresholds, initial EMA)
-    server.on("/api/alg-config", HTTP_GET | HTTP_POST, handleAlgConfig);
 
     // Health check endpoint (no session required)
     server.on("/api/health", HTTP_GET, handleHealth);
+
+    // Thermo Control API endpoints
+    registerThermoHandlers(server);
 
     // 404 handler - also enforce whitelist
     server.onNotFound([](AsyncWebServerRequest* request) {
