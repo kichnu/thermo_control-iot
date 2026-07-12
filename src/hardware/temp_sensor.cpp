@@ -32,17 +32,17 @@ static uint8_t sts35_crc(uint8_t msb, uint8_t lsb) {
 
 static bool sts35_read(float& out_temp) {
     // Trigger single-shot high repeatability
-    Wire.beginTransmission(STS35_I2C_ADDR);
-    Wire.write(0x24);
-    Wire.write(0x00);
-    if (Wire.endTransmission() != 0) return false;
+    Wire1.beginTransmission(STS35_I2C_ADDR);
+    Wire1.write(0x24);
+    Wire1.write(0x00);
+    if (Wire1.endTransmission() != 0) return false;
 
     delay(16);  // 15ms conversion + margin
 
-    if (Wire.requestFrom((uint8_t)STS35_I2C_ADDR, (uint8_t)3) != 3) return false;
-    uint8_t msb = Wire.read();
-    uint8_t lsb = Wire.read();
-    uint8_t crc = Wire.read();
+    if (Wire1.requestFrom((uint8_t)STS35_I2C_ADDR, (uint8_t)3) != 3) return false;
+    uint8_t msb = Wire1.read();
+    uint8_t lsb = Wire1.read();
+    uint8_t crc = Wire1.read();
 
     if (sts35_crc(msb, lsb) != crc) return false;
 
@@ -52,8 +52,8 @@ static bool sts35_read(float& out_temp) {
 }
 
 void initTempSensor() {
-    Wire.beginTransmission(STS35_I2C_ADDR);
-    uint8_t err = Wire.endTransmission();
+    Wire1.beginTransmission(STS35_I2C_ADDR);
+    uint8_t err = Wire1.endTransmission();
     if (err == 0) {
         LOG_INFO("TempSensor: STS35 found at 0x%02X", STS35_I2C_ADDR);
         s_fault_count = 0;
@@ -87,4 +87,14 @@ bool    isTempValid()        { return s_valid; }
 float   getTemperature()     { return s_last_temp; }
 int16_t getTemperatureX10()  { return (int16_t)(s_last_temp * 10.0f); }
 uint8_t getSensorFaultCount(){ return s_fault_count; }
-bool    isTrendAlarm()       { return false; /* TODO: Etap 3b */ }
+
+bool isTrendAlarm(float delta_threshold) {
+    if (!s_trend_full) return false;  // niepełne okno 5 min — za mało danych
+
+    // s_trend_idx wskazuje slot następnego zapisu = aktualnie najstarsza próbka.
+    // Najnowsza jest w slocie tuż przed nim (bufor kołowy).
+    int16_t oldest = s_trend_buf[s_trend_idx];
+    int16_t newest = s_trend_buf[(s_trend_idx + TREND_ALARM_SAMPLES - 1) % TREND_ALARM_SAMPLES];
+    float drop = (oldest - newest) / 10.0f;  // dodatnie = spadek temperatury
+    return drop > delta_threshold;
+}

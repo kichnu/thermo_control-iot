@@ -4,16 +4,14 @@
 
 // TODO: Etap 2b — implementacja
 
-#define FAN_LEDC_CHANNEL    0
 #define FAN_LEDC_FREQ_HZ    25000
 #define FAN_LEDC_RESOLUTION 8       // 8-bit: 0–255
 
 static uint8_t s_fan_pct = 0;
 
 void initFanController() {
-    ledcSetup(FAN_LEDC_CHANNEL, FAN_LEDC_FREQ_HZ, FAN_LEDC_RESOLUTION);
-    ledcAttachPin(FAN_PWM_PIN, FAN_LEDC_CHANNEL);
-    ledcWrite(FAN_LEDC_CHANNEL, 0);
+    ledcAttach(FAN_PWM_PIN, FAN_LEDC_FREQ_HZ, FAN_LEDC_RESOLUTION);
+    ledcWrite(FAN_PWM_PIN, 0);
     s_fan_pct = 0;
     LOG_INFO("FanController: LEDC PWM init, pin=%d freq=%dHz", FAN_PWM_PIN, FAN_LEDC_FREQ_HZ);
 }
@@ -21,7 +19,7 @@ void initFanController() {
 void setFanSpeed(uint8_t pct) {
     if (pct > 100) pct = 100;
     s_fan_pct = pct;
-    ledcWrite(FAN_LEDC_CHANNEL, (uint32_t)(pct * 255 / 100));
+    ledcWrite(FAN_PWM_PIN, (uint32_t)(pct * 255 / 100));
 }
 
 uint8_t getFanSpeedPct() { return s_fan_pct; }
@@ -34,4 +32,4 @@ uint8_t calcFanSpeed(float temp, float cool_start_abs, float cool_full_abs) {
     return (uint8_t)((temp - cool_start_abs) / range * 100.0f);
 }
 
-void fanEmergencyOff() { ledcWrite(FAN_LEDC_CHANNEL, 0); s_fan_pct = 0; }
+void fanEmergencyOff() { ledcWrite(FAN_PWM_PIN, 0); s_fan_pct = 0; }

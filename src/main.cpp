@@ -33,18 +33,14 @@ void setup() {
 
     LOG_INFO("====================================");
     LOG_INFO("=== Thermo Control — Akwarium 240L ===");
-    LOG_INFO("ESP32-C3, XIAO, DS3231+STS35+FRAM I2C");
+    LOG_INFO("ESP32-S3-Pico, DS3231+STS35 I2C, FRAM SPI");
     LOG_INFO("Flash: %d  Heap: %d", ESP.getFlashChipSize(), ESP.getFreeHeap());
     LOG_INFO("Checking provisioning button...");
 
     if (checkProvisioningButton()) {
         LOG_INFO("=== PROVISIONING MODE ===");
 
-        Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-        Wire.setClock(100000);
-        delay(50);
-
-        if (!initFRAM()) {
+        if (!initFRAM()) {  // FRAM na SPI — credentials
             LOG_INFO("WARNING: FRAM init failed — credentials may not save");
             buzzerCritical();
             delay(2000);
@@ -69,12 +65,14 @@ void setup() {
     // === PRODUCTION MODE ===
     LOG_INFO("=== Production Mode — Thermo Control ===");
 
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(100000);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);    // I2C0: DS3231
+    Wire.setClock(400000);
+    Wire1.begin(STS35_SDA_PIN, STS35_SCL_PIN); // I2C1: STS35 na długim kablu
+    Wire1.setClock(100000);
     delay(50);
 
     initializeRTC();
-    initSystemFRAM();  // Wire.begin + initFRAM + FRAM check
+    initSystemFRAM();  // FRAM na SPI — init + header check
 
     bool credentials_loaded = initCredentialsManager();
     LOG_INFO("Device ID: %s", credentials_loaded ? getDeviceID() : "FALLBACK");
@@ -82,7 +80,7 @@ void setup() {
     initTempSensor();
     initHeaterController();
     initFanController();
-    initEnergyMeter();
+    initEnergyMeter(DEFAULT_PULSES_PER_KWH);
     thermoAlgorithm.begin();
 
     initWiFi();
@@ -129,13 +127,7 @@ void loop() {
     if (now - g_lastTempUpdate >= TEMP_MEASURE_MS) {
         g_lastTempUpdate = now;
         updateTempSensor();
-        thermoAlgorithm.update();
-
-        // Zapis do ring buffer jeśli okno 30 min pełne
-        if (thermoAlgorithm.isWindowReady()) {
-            TempRecord rec = thermoAlgorithm.consumeWindowRecord();
-            // TODO: Etap 4c — framWriteRecord(rec)
-        }
+        thermoAlgorithm.update();  // steruje aktuatorami + loguje zdarzenia do FRAM ring buffera
 
         checkSystemAutoEnable();
     }

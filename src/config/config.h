@@ -38,6 +38,6 @@ const unsigned long BLOCK_DURATION_MS       = 60000;
 #define DEVICE_ID_DYNAMIC            getDeviceID()
 
 // ================= FRAM =================
-void initSystemFRAM();  // Wire.begin + initFRAM
+void initSystemFRAM();  // initFRAM (SPI)
 
 #endif // CONFIG_H

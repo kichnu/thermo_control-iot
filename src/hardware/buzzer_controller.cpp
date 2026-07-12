@@ -27,7 +27,7 @@ static void buzzerTask(void*) {
                 break;
         }
 
-        digitalWrite(BUZZER_PIN, on ? LOW : HIGH);
+        digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
 
         if (++tick >= BUZZER_CYCLE_TICKS) tick = 0;
     }
@@ -35,7 +35,7 @@ static void buzzerTask(void*) {
 
 void initBuzzer() {
     pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, HIGH);  // HIGH = off (active LOW)
+    digitalWrite(BUZZER_PIN, LOW);  // LOW = off (active HIGH, stan 1 = ON)
     xTaskCreate(buzzerTask, "buzzer", 1024, nullptr, 1, &g_taskHandle);
 }
 
@@ -47,9 +47,9 @@ void setBuzzerMode(BuzzerMode mode) {
 
 static void beep(uint32_t ms) {
     if (g_taskHandle) vTaskSuspend(g_taskHandle);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(ms);
     digitalWrite(BUZZER_PIN, HIGH);
+    delay(ms);
+    digitalWrite(BUZZER_PIN, LOW);
     if (g_taskHandle) vTaskResume(g_taskHandle);
 }
 

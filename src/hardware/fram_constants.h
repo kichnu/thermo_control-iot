@@ -3,7 +3,7 @@
 
 // ============================================================
 // SHARED FRAM CONSTANTS — Thermo Control
-// MB85RC256V, I2C 0x50, 32KB (0x0000–0x7FFF)
+// MB85RS64V, SPI (CS = FRAM_SPI_CS_PIN), 8KB (0x0000–0x1FFF)
 // ============================================================
 
 #define FRAM_MAGIC_NUMBER       0x54484D4F  // "THMO" in hex
@@ -22,22 +22,31 @@
 #define FRAM_CREDENTIALS_ADDR   0x0018
 #define FRAM_CREDENTIALS_SIZE   1024
 
-// 0x0500–0x054B: System data
-#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (40B)
-#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x0528  // 2B checksum
-#define FRAM_ADDR_ENERGY_STORE      0x0530  // EnergyStore (14B)
-#define FRAM_ADDR_ENERGY_CHKSUM     0x053E  // 2B checksum
-#define FRAM_ADDR_BUF_COUNT         0x0540  // 2B — liczba zapisanych rekordów
-#define FRAM_ADDR_BUF_WPTR          0x0542  // 2B — write pointer (0–2399)
-#define FRAM_ADDR_BUF_META_CHKSUM   0x0544  // 2B checksum metadanych
+// 0x0500–0x055D: System data
+// Uwaga: ThermoConfig realnie 44B (10 float+u16+2×u8), EnergyStore realnie 12B
+// (checksum wbudowany w struct) — poprawione static_assert w algorithm_config.h,
+// dawne komentarze "40B"/"16B" były błędne od commitu Etap 0.
+#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (44B)
+#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x052C  // 2B checksum
+#define FRAM_ADDR_LOG_ZONE_CONFIG   0x052E  // LogZoneConfig (28B) — progi LogZone z GUI
+#define FRAM_ADDR_LOG_ZONE_CHKSUM   0x054A  // 2B checksum
+#define FRAM_ADDR_ENERGY_STORE      0x054C  // EnergyStore (12B, checksum wbudowany)
+#define FRAM_ADDR_BUF_COUNT         0x0558  // 2B — liczba zapisanych rekordów
+#define FRAM_ADDR_BUF_WPTR          0x055A  // 2B — write pointer (0–799)
+#define FRAM_ADDR_BUF_META_CHKSUM   0x055C  // 2B checksum metadanych
+// 0x055E–0x05FF: gap (162B rezerwa)
 
-// 0x0600–0x767F: Ring buffer (2400 × 12B = 28800B)
+// 0x0600–0x1EFF: Ring buffer, event-driven (zmiana strefy/heartbeat/boot,
+// nie periodic co 30 min — patrz pamięć projektu fram_event_logging)
+// 800 × 8B = 6400B. Pokrycie zmienne (zależne od częstości zdarzeń):
+// ~800 dni gdy stabilnie (sam heartbeat), ~16,6 doby w najgorszym razie
+// (ciągłe flapowanie co 30 min = min. odstęp między zdarzeniami).
 #define FRAM_ADDR_RING_BUFFER       0x0600
-#define RING_BUFFER_CAPACITY        2400    // rekordów
-#define RING_RECORD_SIZE            12      // bajtów (sizeof(TempRecord))
-// koniec bufora: 0x0600 + 28800 = 0x767F
+#define RING_BUFFER_CAPACITY        800     // rekordów
+#define RING_RECORD_SIZE            8       // bajtów (sizeof(TempRecord))
+// koniec bufora: 0x0600 + 6400 = 0x1EFF
 
-// 0x7680–0x7FFF: wolne (2432B)
+// 0x1F00–0x1FFF: wolne (256B rezerwa)
 
 // ============================================================
 // ENCRYPTION (credentials — bez zmian z ATO)

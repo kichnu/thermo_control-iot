@@ -21,12 +21,12 @@ void initAuthManager() {
     }
 }
 
+// Etap bench-test: zezwól na całą prywatną sieć lokalną (RFC1918) zamiast
+// wąskiej whitelisty pojedynczych IP — do doprecyzowania przy hardeningu.
 bool isIPAllowed(IPAddress ip) {
-    for (int i = 0; i < ALLOWED_IPS_COUNT; i++) {
-        if (ALLOWED_IPS[i] == ip) {
-            return true;
-        }
-    }
+    if (ip[0] == 10) return true;                                  // 10.0.0.0/8
+    if (ip[0] == 192 && ip[1] == 168) return true;                  // 192.168.0.0/16
+    if (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) return true;     // 172.16.0.0/12
     return false;
 }
 

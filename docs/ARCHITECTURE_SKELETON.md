@@ -8,8 +8,8 @@
 
 | Element              | Wartość                                                         |
 |----------------------|-----------------------------------------------------------------|
-| MCU                  | Seeed XIAO ESP32-C3                                             |
-| FRAM                 | MB85RC256V — **I2C, 32KB** (Adafruit #1895 lub bare chip)      |
+| MCU                  | Waveshare ESP32-S3-Pico (dual-core Xtensa LX7 240MHz, 512KB SRAM, octal PSRAM) |
+| FRAM                 | MB85RS64V — **SPI, 8KB** (Adafruit SPI FRAM breakout)          |
 | Temp. czujnik        | STS35 (Sensirion, Forbot) — I2C, ±0.1°C                        |
 | Grzałka aktuator     | SSR (Fotek SSR-25DA lub odpowiednik), active LOW                |
 | Wentylatory aktuator | Iduino ST1168 (MOSFET PWM, 5–24V DC)                           |
@@ -18,73 +18,95 @@
 | Buzzer               | pasywny, HIGH = ON                                              |
 | Przycisk             | provisioning (dedykowany pin — bez dual-use)                    |
 
-**Zmiana decyzji FRAM: SPI 8KB → I2C 32KB**
-- FRAM I2C współdzieli magistralę z RTC (SDA/SCL) — odzyskujemy 4 GPIO (SCK, MISO, MOSI, CS)
-- 32KB = wystarczy na 30 dni historii w rozdzielczości 1h + 24h w 1-min
-- Biblioteka `Adafruit FRAM I2C` — ta sama co w projekcie ATO, driver częściowo reużywalny
-- Adres I2C: MB85RC256V = 0x50, DS3231 = 0x68 → brak konfliktu
+**Zmiana MCU: ESP32-C3 → ESP32-S3 → Waveshare ESP32-S3-Pico**
+- Powód pierwszej zmiany (C3→S3): ESP32-C3 ma 1× I2C; STS35 na kablu ~1m wymaga osobnej magistrali
+- ESP32-S3: 2× sprzętowe I2C (Wire + Wire1) — bez software bit-bang
+- Źródło: ESP32-S3 Datasheet v1.6, sekcja Features: "2 × I2C"
+- Wire (I2C0, GPIO5/6, 400kHz): DS3231 RTC — kable <5cm
+- Wire1 (I2C1, GPIO7/8, 100kHz): STS35 — kabel ~1m, niższa prędkość = lepsza odporność
 
-> ⚠️ Iduino ST1168: zweryfikować napięcie sterowania bramki MOSFET.
-> Logic-level (IRLZ44N): 3.3V z ESP32-C3 wystarczy.
-> Nielogic-level (IRF520): może wymagać level-shiftera 3.3V→5V na sygnale PWM.
+**Zmiana FRAM: I2C 32KB (MB85RC256V) → SPI 8KB (MB85RS64V)**
+- Powód: przejście na event-driven logging temperatury (ring buffer loguje tylko
+  zmiany strefy/heartbeat, nie periodic co 30 min — patrz sekcja 5-6) potrzebuje
+  dużo mniej miejsca; mniejszy, tańszy chip wystarcza
+- SPI wymaga 4 linii (SCK/MOSI/MISO/CS) obok już zajętych I2C0+I2C1+aktuatorów —
+  XIAO ESP32-S3 (11 wyprowadzonych GPIO) nie ma na to miejsca
+- Stąd druga zmiana płytki: Seeed XIAO ESP32-S3 → **Waveshare ESP32-S3-Pico**
+  (dużo więcej wyprowadzonych GPIO, ten sam chip ESP32-S3)
+- `platform`/`board` w PlatformIO zostaje bez zmian (`seeed_xiao_esp32s3`) —
+  board id opisuje chip/flash/toolchain, nie fizyczny pinout płytki; pinout
+  jest wyłącznie w `hardware_pins.h` (konwencja potwierdzona: Dozownik/ATO
+  używa tego samego wzorca — `board` w `[env]` niezależny od faktycznej płytki)
+- SPI FRAM na domyślnych pinach IO_MUX SPI2/FSPI ESP32-S3 (najszybsza ścieżka,
+  bez GPIO matrix): CS=GPIO10, MOSI=GPIO11, SCK=GPIO12, MISO=GPIO13
+- Biblioteka `Adafruit FRAM SPI` (zamiast `Adafruit FRAM I2C`)
+- Pełny pinout płytki: `docs/ESP32-S3-Pico pinout.md`
+
+> ⚠️ GPIO3, GPIO21 = wyprowadzone tylko jako test pointy (TP) przy USB-C, nie
+> w goldpinie — fizycznie niepraktyczne do podpięcia, NIE używać.
+> GPIO1,2,3,4: LOW glitch ~60µs przy power-on (ESP32-S3 DS Table 2-2). Akceptowalne.
+> GPIO9: brak boot glitch → idealny dla ISR energy pulse.
+> GPIO33-37: octal PSRAM (Pico) — nie używać. GPIO38: safety cutoff (opis płytki) — zarezerwowane.
+> GPIO39-42: JTAG — unikać w produkcji.
+> ⚠️ Iduino ST1168: zweryfikować napięcie bramki MOSFET (3.3V z S3 wystarczy dla logic-level).
 
 ---
 
-## 2. Pinout — XIAO ESP32-C3
+## 2. Pinout — Waveshare ESP32-S3-Pico
 
-### Diagram funkcjonalny
-
-```
-                        ┌─────────────────────────┐
-                        │      [USB-C]             │
-                        │                          │
-                GND ────┤ GND              GND ────┤
-                 5V ────┤ 5V              3V3 ─────┤──► 3.3V out
-                3V3 ────┤ 3V3 (in)        RST ─────┤
-          NC (wolny) ───┤ D0 / GPIO 2  GPIO10 / D10├──── NC (wolny)
-  SSR grzałka  ◄────────┤ D1 / GPIO 3   GPIO9 / D9 ├──── NC (wolny)
-  Fan PWM      ◄────────┤ D2 / GPIO 4   GPIO8 / D8 ├──── NC (wolny)
-  Energy pulse ────────►┤ D3 / GPIO 5  GPIO20 / D7 ├◄─── Provisioning btn
-  I2C SDA      ◄───────►┤ D4 / GPIO 6  GPIO21 / D6 ├───► Buzzer
-  I2C SCL      ◄───────►┤ D5 / GPIO 7              │
-                        └─────────────────────────┘
-```
+Pełny diagram fizyczny płytki: `docs/ESP32-S3-Pico pinout.md`. Poniżej tylko
+piny faktycznie użyte (źródło: `src/hardware/hardware_pins.h`).
 
 ### Tabela przypisań
 
-| Pin fizyczny | GPIO  | Funkcja              | Kierunek | Uwagi                                 |
-|--------------|-------|----------------------|----------|---------------------------------------|
-| D0           | GPIO2 | NC (wolny)           | —        | Zarezerwowany na przyszłość           |
-| D1           | GPIO3 | HEATER_SSR_PIN       | OUT      | Active LOW → SSR control input        |
-| D2           | GPIO4 | FAN_PWM_PIN          | OUT      | LEDC PWM 25kHz → Iduino ST1168        |
-| D3           | GPIO5 | ENERGY_PULSE_PIN     | IN       | INPUT_PULLUP, ISR FALLING, optocoupler|
-| D4           | GPIO6 | I2C SDA              | I/O      | DS3231 (0x68) + MB85RC256V (0x50) + STS35 (0x4B)|
-| D5           | GPIO7 | I2C SCL              | OUT      | I2C clock                             |
-| D6           | GPIO21| BUZZER_PIN           | OUT      | HIGH = ON                             |
-| D7           | GPIO20| RESET_PIN            | IN       | INPUT_PULLUP, hold 5s → provisioning  |
-| D8           | GPIO8 | NC                   | —        | Wolny, zarezerwowany na przyszłość    |
-| D9           | GPIO9 | NC                   | —        | Wolny, zarezerwowany na przyszłość    |
-| D10          | GPIO10| NC                   | —        | Wolny, zarezerwowany na przyszłość    |
+| GPIO    | Funkcja              | Kierunek | Uwagi                                        |
+|---------|----------------------|----------|----------------------------------------------|
+| GPIO1   | HEATER_SSR_PIN       | OUT      | Active LOW; LOW glitch 60µs przy boot (DS §2.2)|
+| GPIO2   | FAN_PWM_PIN          | OUT      | LEDC PWM 25kHz; LOW glitch 60µs (fan OFF)    |
+| GPIO4   | BUZZER_PIN           | OUT      | HIGH = ON; LOW glitch = cisza przy boot      |
+| GPIO5   | I2C0 SDA (Wire)      | I/O      | DS3231 RTC (0x68), 400kHz                   |
+| GPIO6   | I2C0 SCL (Wire)      | OUT      | I2C0 clock                                  |
+| GPIO7   | STS35 SDA (Wire1)    | I/O      | I2C1, 100kHz, kabel ~1m                     |
+| GPIO8   | STS35 SCL (Wire1)    | OUT      | I2C1 clock                                  |
+| GPIO9   | ENERGY_PULSE_PIN     | IN       | INPUT_PULLUP, ISR FALLING; brak boot glitch  |
+| GPIO10  | FRAM_SPI_CS_PIN      | OUT      | SPI2/FSPI, domyślny IO_MUX (bez GPIO matrix) |
+| GPIO11  | FRAM_SPI_MOSI_PIN    | OUT      | SPI2/FSPI                                    |
+| GPIO12  | FRAM_SPI_SCK_PIN     | OUT      | SPI2/FSPI                                    |
+| GPIO13  | FRAM_SPI_MISO_PIN    | IN       | SPI2/FSPI                                    |
+| GPIO14  | RESET_PIN            | IN       | INPUT_PULLUP; GPIO3 pominięty (tylko TP)     |
+
+GPIO15-18 — wolne (zarezerwowane na przyszłość).
+GPIO0, GPIO3, GPIO21, GPIO33-42 — nieużywane celowo (strapping/TP/PSRAM/safety cutoff/JTAG, patrz sekcja 1).
 
 ### Schemat I2C bus
 
 ```
-GPIO6 (SDA) ─────┬──────────────────┬──────────────┐
-                 │                  │              │
-              DS3231             MB85RC256V     STS35
-              0x68 (RTC)         0x50 (FRAM)   0x4B (temp)
-                 │                  │              │
-GPIO7 (SCL) ─────┴──────────────────┴──────────────┘
+I2C0 (Wire, 400kHz):
+GPIO5 (SDA) ────── DS3231 0x68 (RTC) ── kable <5cm
+GPIO6 (SCL) ──────
 
-Pull-up: 4.7kΩ do 3V3 (jeden zestaw na magistrali — można z RTC breakout)
-STS35 ADDR pin → VDD = adres 0x4B; → GND = adres 0x4A (drugi czujnik w v2)
+I2C1 (Wire1, 100kHz):
+GPIO7 (SDA) ────── STS35 (0x4B) ── kabel ~1m ── akwarium
+GPIO8 (SCL) ────── STS35
+Pull-up: 4.7kΩ do 3V3 (przy module STS35)
+STS35 ADDR pin → VDD = 0x4B; → GND = 0x4A (dla drugiego czujnika v2)
+```
+
+### Schemat SPI FRAM
+
+```
+MB85RS64V (8KB, SPI)          ESP32-S3-Pico
+CS   ────────────────────────── GPIO10
+MOSI ────────────────────────── GPIO11
+SCK  ────────────────────────── GPIO12
+MISO ────────────────────────── GPIO13
 ```
 
 ### Schemat Energy Pulse (izolacja galwaniczna)
 
 ```
-Miernik energii         ESP32-C3
-(5–24V open-coll.) ─── PC817 ──── GPIO5 (INPUT_PULLUP)
+Miernik energii         ESP32-S3-Pico
+(5–24V open-coll.) ─── PC817 ──── GPIO9 (INPUT_PULLUP)
                     optocoupler
 ```
 
@@ -142,6 +164,11 @@ STATE_SENSOR_FAULT  — 3× błąd CRC STS35  → SSR OFF + fan 0% + buzzer (fai
 STATE_TREND_ALARM   — temp spada szybko przy SSR ON → buzzer WARNING
 ```
 
+> Uwaga: powyższe stany sterują aktuatorami i zostają bez zmian. Do logowania
+> (ring buffer FRAM) ALARM_LOW/ALARM_HIGH są dodatkowo rozbite na 3 stopnie
+> nasilenia (bo 1°C i 3°C przekroczenia to dla użytkownika zupełnie różna
+> sytuacja) — patrz `LogZone` w sekcji 5, osobny enum tylko do logowania.
+
 ---
 
 ## 4. Miernik energii — wejście impulsów
@@ -187,16 +214,65 @@ struct ThermoConfig {               // 40B + 2B checksum
 };
 static_assert(sizeof(ThermoConfig) == 40);
 
-struct TempRecord {                 // 12B — ring buffer entry
-    uint32_t timestamp;             // Unix UTC
-    int16_t  temp_x10;             // temp × 10  (250 = 25.0°C)
-    uint8_t  state;                 // AlgorithmState
-    uint8_t  alarm_flags;           // bitmaska aktywnych alarmów
-    uint8_t  heater_pct;            // % czasu SSR ON w tym interwale (0–100)
-    uint8_t  fan_pct;               // średnie wypełnienie PWM (0–100)
-    uint16_t _pad;
+struct TempRecord {                 // 8B — ring buffer entry, EVENT-DRIVEN
+                                     // (zmiana strefy / heartbeat / boot — NIE periodic co 30 min)
+    uint32_t timestamp;             // Unix UTC zdarzenia
+    int16_t  temp_x10;              // temp × 10 w chwili zdarzenia (250 = 25.0°C)
+    uint8_t  zone_reason;           // [3:0] LogZone, [5:4] LogReason, [6] UNSTABLE, [7] reserved
+    uint8_t  actuator_snapshot;     // [0] heater on/off, [7:1] fan_pct (0–100) w chwili zdarzenia
 };
-static_assert(sizeof(TempRecord) == 12);
+static_assert(sizeof(TempRecord) == 8);
+
+enum LogZone : uint8_t {            // TYLKO do logowania — nie steruje aktuatorami (to robi AlgorithmState)
+    ZONE_IDLE          = 0,
+    ZONE_HEATING       = 1,
+    ZONE_COOLING       = 2,
+    ZONE_ALARM_LOW_1   = 3,         // najlżejsze przekroczenie w dół
+    ZONE_ALARM_LOW_2   = 4,
+    ZONE_ALARM_LOW_3   = 5,         // najcięższe
+    ZONE_ALARM_HIGH_1  = 6,
+    ZONE_ALARM_HIGH_2  = 7,
+    ZONE_ALARM_HIGH_3  = 8,
+    ZONE_TREND_ALARM   = 9,
+    ZONE_SENSOR_FAULT  = 10,
+};
+// Progi ustalone (2026-07-08), konfigurowalne z GUI jako różnice od target_temp
+// (struct LogZoneConfig, 28B, FRAM 0x052E). Domyślne wartości — patrz
+// DEFAULT_LOG_ZONE_* w algorithm_config.h:
+//   normal_delta = 0.5°C (typowy swing regulacji ~0.4°C w normalnych warunkach
+//                  → 0.1°C marginesu, żeby granica nie triggerowała się na
+//                  każdym cyklu SSR ON/OFF — margines świadomie ciasny, do
+//                  monitorowania empirycznie po uruchomieniu)
+//   low_step_1/2/3  = 1.0 / 2.0 / 3.5°C poniżej target_temp
+//   high_step_1/2/3 = 1.0 / 2.0 / 3.5°C powyżej target_temp (osobna konfiguracja)
+// Walidacja przy zapisie z GUI: step_1 < step_2 < step_3, step_1 > normal_delta.
+
+enum LogReason : uint8_t {
+    REASON_ZONE_CHANGE = 0,         // przejście między strefami (z histerezą)
+    REASON_HEARTBEAT   = 1,         // wymuszony wpis mimo braku zmiany strefy
+    REASON_BOOT        = 2,         // znacznik restartu urządzenia
+};
+
+struct LogZoneConfig {              // 28B + 2B checksum, FRAM 0x052E — progi z GUI
+    float normal_delta;   // domyślnie 0.5°C
+    float low_step_1;     // domyślnie 1.0°C
+    float low_step_2;     // domyślnie 2.0°C
+    float low_step_3;     // domyślnie 3.5°C
+    float high_step_1;    // domyślnie 1.0°C
+    float high_step_2;    // domyślnie 2.0°C
+    float high_step_3;    // domyślnie 3.5°C
+};
+static_assert(sizeof(LogZoneConfig) == 28);
+
+// Zasady zapisu (ustalone, implementacja w Etapie 4):
+//   - odstęp minimalny między zdarzeniami: 30 min = LOG_MIN_EVENT_INTERVAL_S
+//     (bezwładność cieplna 240L wody fizycznie wyklucza szybszą realną zmianę)
+//   - heartbeat: 24h = LOG_HEARTBEAT_INTERVAL_S — TYLKO #define, nie z GUI
+//   - flaga UNSTABLE: ta sama granica przekroczona ≥3× (LOG_FLAPPING_COUNT)
+//     w oknie 6h (LOG_FLAPPING_WINDOW_S) → nie tłumić, tylko oznaczyć jako
+//     sygnał diagnostyczny (kandydat też na buzzer WARNING)
+//   - rekonstrukcja przy odczycie/eksporcie: fill-forward (zero-order hold) —
+//     liczone przy odczycie, NIE zapisywane jako syntetyczne rekordy w FRAM
 
 struct EnergyStore {                // 16B (osobny adres, częste zapisy)
     uint32_t total_pulses;          // narastający licznik
@@ -224,40 +300,60 @@ enum AlgorithmState : uint8_t {
 
 ---
 
-## 6. Layout FRAM 32KB (MB85RC256V, 0x0000–0x7FFF)
+## 6. Layout FRAM 8KB (MB85RS64V, SPI, 0x0000–0x1FFF)
 
 ```
 Adres       Rozmiar    Zawartość
 ────────────────────────────────────────────────────────────────
-0x0000       4B        Magic "THMO"
+0x0000       4B        Magic "THMO" (0x544D4F48)
 0x0004       2B        Data version (0x0001)
 0x0006      18B        Reserved
-0x0018    1024B        Encrypted credentials (bez zmian z ATO)
-                       [koniec: 0x0417]
-0x0500      42B        ThermoConfig + 2B checksum
-0x0530      16B        EnergyStore (z własnym checksum)
-0x0540      12B        Ring buffer metadata (count + wptr + checksum)
-0x0600   28800B        Ring buffer — 2400 × 12B (30-min records, 50 dni)
-                       [koniec: 0x767F]
-0x7680    2432B        WOLNE (rezerwa ~7.4%)
+0x0018    1024B        Encrypted credentials   [koniec: 0x0417]
+0x0418     232B        Gap (reserved)          [koniec: 0x04FF]
+0x0500      44B        ThermoConfig (realnie 44B — 10 float+u16+2×u8, nie 40B)
+                                               [koniec: 0x052B]
+0x052C       2B        ThermoConfig checksum   [koniec: 0x052D]
+0x052E      28B        LogZoneConfig (progi LogZone z GUI) [koniec: 0x0549]
+0x054A       2B        LogZoneConfig checksum  [koniec: 0x054B]
+0x054C      12B        EnergyStore (checksum wbudowany w struct, realnie 12B)
+                                               [koniec: 0x0557]
+0x0558       2B        Ring buffer count
+0x055A       2B        Ring buffer wptr
+0x055C       2B        Ring buffer checksum    [koniec: 0x055D]
+0x055E     162B        Gap (reserved)          [koniec: 0x05FF]
+0x0600    6400B        Ring buffer — 800 × 8B, EVENT-DRIVEN
+                        (zmiana strefy/heartbeat/boot, NIE periodic co 30 min)
+                                               [koniec: 0x1EFF]
+0x1F00     256B        WOLNE (rezerwa)         [koniec: 0x1FFF]
 ────────────────────────────────────────────────────────────────
-Użyte: 30336 / 32768 B (92.6%)
+Użyte: 7 936B / 8 192B  (96,9%)
+Rezerwa: 256B
 
-Math: 50 dni × 24h × 2 rec/h × 12B = 28 800B ✅
+Math: 800 rek. × 8B = 6 400B  ✓
+
+Pokrycie czasowe ZMIENNE (zależne od częstości zdarzeń — to jest właśnie cel
+event-driven logging, nie stały interwał jak przy periodic):
+  - stabilny system (sam heartbeat 1×/dobę):                    ~800 dni
+  - typowy (heartbeat + kilka zmian strefy/dobę):                ~150–300 dni
+  - najgorszy przypadek (ciągłe flapowanie co 30 min = minimalny
+    odstęp między zdarzeniami):                          800/48 ≈ 16,6 doby
+
+Trade-off świadomie zaakceptowany: poprzednia wersja (32KB, periodic, 3600×8B)
+dawała deterministyczne 75 dni zawsze. Ta wersja: mniejszy/tańszy chip (8KB),
+dużo dłuższe realne pokrycie w typowym przypadku, gorszy worst-case niż
+poprzednio. Szczegóły decyzji: pamięć projektu `fram_event_logging`.
 ```
 
 **Jeden bufor, jeden interwał:**
-- Pomiar STS35: co **15s** (single-shot I2C, konfigurowalny stałą `TEMP_MEASURE_INTERVAL_S`)
-- Akumulacja w RAM przez 30 minut: avg(temp), sum(heater_on_samples), avg(fan_pct), OR(alarm_flags)
-- Zapis do FRAM: **co 30 minut** (1 rekord per okno)
-- Brak downsampli, brak drugiego bufora — prosta, przewidywalna logika
+- Pomiar STS35: co **15s** (`TEMP_MEASURE_INTERVAL_S`)
+- Akumulacja w RAM przez **30 minut** (`WINDOW_DURATION_S = 1800`): avg(temp), sum(heater_on), OR(alarm_flags), dominant state
+- Zapis do FRAM: **1 rekord co 30 minut** (brak downsamplingu, brak drugiego bufora)
 
-**Zawartość rekordu per okno 30 min:**
-- `temp_x10`: średnia temperatura z ~120 próbek (30 min / 15s)
-- `heater_pct`: (liczba próbek SSR ON / 120) × 100
-- `fan_pct`: średnie wypełnienie PWM
-- `alarm_flags`: OR wszystkich flag z okna (1 → alarm był aktywny)
-- `state`: dominujący stan (najdłużej aktywny w oknie)
+**Zawartość rekordu 8B:**
+- `timestamp` (4B): Unix UTC koniec okna
+- `temp_x10` (2B): średnia z ~120 próbek — rozdzielczość 0.1°C, zakres ±3276.7°C
+- `heater_pct` (1B): (próbki SSR ON / 120) × 100 — przybliżony duty cycle grzałki
+- `flags` (1B): bity [3:0] = alarmy aktywne w oknie; bity [6:4] = dominujący stan automatu
 
 ---
 
@@ -269,9 +365,14 @@ Nowe:
 ```
 GET  /api/status             — temp_c, state, fan_pct, heater_on, power_w,
                                alarm_flags, energy_kwh_today, energy_kwh_total
-GET  /api/history            — ring buffer 2400 rek. (newest-first, 50 dni)
+GET  /api/history            — ring buffer 800 rek. event-driven (newest-first,
+                               pokrycie zmienne — patrz sekcja 6)
 GET  /api/thermo-config
 POST /api/thermo-config      — wszystkie pola ThermoConfig (form-encoded)
+GET  /api/log-zone-config
+POST /api/log-zone-config    — progi LogZoneConfig: normal_delta, low_step_1-3,
+                               high_step_1-3 (form-encoded); walidacja monotoniczności
+                               po stronie serwera (step_1<step_2<step_3, step_1>normal_delta)
 POST /api/reset-alarm        — manual ack
 POST /api/system-toggle      — enable/disable
 POST /api/system-reset       — reset automatu stanów
@@ -296,13 +397,13 @@ src/hardware/rtc_controller.*
 
 ### Częściowo reużywalne z ATO (adapter + nowy layout)
 ```
-src/hardware/fram_controller.*  I2C wraca — przepisać layout, zachować wzorzec kodu
-src/hardware/fram_constants.h   nowe stałe adresów, magic "THMO"
+src/hardware/fram_controller.*  SPI (nie I2C) — przepisać driver + layout 8KB, zachować wzorzec kodu
+src/hardware/fram_constants.h   ✓ zaktualizowane — 8KB SPI, ring buffer 800×8B
 ```
 
 ### Przepisać od zera
 ```
-src/hardware/hardware_pins.h
+src/hardware/hardware_pins.h    ✓ zaktualizowane — Waveshare Pico + SPI FRAM
 src/hardware/temp_sensor.*      STS35 I2C single-shot, CRC8, trend bufor RAM
 src/hardware/heater_controller.* SSR ON/OFF
 src/hardware/fan_controller.*   LEDC PWM
@@ -328,10 +429,14 @@ src/algorithm/water_algorithm.*
 ## 9. Zależności PlatformIO
 
 ```ini
-[env:seeed_xiao_esp32c3]
+[env:seeed_xiao_esp32s3]
 platform  = espressif32
-board     = seeed_xiao_esp32c3
+board     = seeed_xiao_esp32s3
 framework = arduino
+; UWAGA: fizyczna płytka to Waveshare ESP32-S3-Pico, nie XIAO — board id w
+; PlatformIO opisuje chip/flash/toolchain (ten sam ESP32-S3), nie pinout.
+; Ten sam wzorzec (board != faktyczna płytka) stosowany w Dozowniku/ATO.
+; Pinout wyłącznie w src/hardware/hardware_pins.h.
 
 board_build.partitions = huge_app.csv
 board_build.flash_mode = dio
@@ -353,7 +458,8 @@ lib_deps =
     mathieucarbou/ESPAsyncWebServer@^3.3.23
     bblanchon/ArduinoJson@^7.4.2
     adafruit/RTClib@^2.1.1
-    adafruit/Adafruit FRAM I2C       ; powrót do I2C — ta sama lib co ATO
+    adafruit/Adafruit FRAM SPI       ; SPI, nie I2C — MB85RS64V 8KB
+    ; SPI: wbudowana biblioteka Arduino core (SPI.h), bez wpisu w lib_deps
     ; STS35: raw Wire (Sensirion I2C protocol) — bez dodatkowej biblioteki
 ```
 
@@ -363,22 +469,25 @@ lib_deps =
 
 | Temat                     | Decyzja                                                    |
 |---------------------------|------------------------------------------------------------|
-| FRAM                      | MB85RC256V, I2C, 32KB (Adafruit #1895)                    |
-| I2C bus sharing           | RTC (0x68) + FRAM (0x50) na tej samej magistrali          |
+| MCU                       | Waveshare ESP32-S3-Pico (dual-core 240MHz, więcej GPIO niż XIAO — potrzebne pod SPI) |
+| FRAM                      | MB85RS64V, **SPI**, 8KB — event-driven logging potrzebuje mało miejsca |
+| SPI (FSPI/SPI2)           | FRAM: CS=GPIO10, MOSI=GPIO11, SCK=GPIO12, MISO=GPIO13 (domyślny IO_MUX) |
+| I2C0 (Wire, 400kHz)       | DS3231 (0x68), GPIO5/6, kable <5cm — FRAM już nie na I2C  |
+| I2C1 (Wire1, 100kHz)      | STS35 (0x4B), GPIO7/8, kabel ~1m                         |
 | GPIO dual-use             | USUNIĘTY — dedykowany pin dla każdej funkcji               |
 | Grzałka aktuator          | SSR active LOW                                             |
 | Wentylator aktuator       | Iduino ST1168, LEDC PWM 25kHz                              |
 | Algorytm grzania          | ON/OFF histereza via SSR                                   |
 | Algorytm chłodzenia       | proporcjonalny PWM, liniowa krzywa                         |
 | Alarm trendu              | RAM bufor 20×15s, brak zapisu do FRAM                      |
-| Czujnik temp              | 1× STS35 (Forbot/Sensirion), I2C 0x4B, co 15s, ±0.1°C   |
+| Czujnik temp              | 1× STS35, Wire1 (I2C1) 0x4B, co 15s, ±0.1°C, kabel ~1m |
 | Termostat grzałki         | przestawić na 28–30°C                                      |
 | Pomiar mocy grzałki       | obliczany: heater_watt × heater_pct                        |
-| Miernik energii           | pulse input GPIO5, ISR FALLING, optocoupler PC817          |
-| Ring buffer               | 2400×12B, interwał 30 min, 50 dni — jeden bufor, brak downsampli |
-| Historia                  | 50 dni w rozdzielczości 30-minutowej                       |
+| Miernik energii           | pulse input GPIO9, ISR FALLING, optocoupler PC817          |
+| Ring buffer               | 800×8B, EVENT-DRIVEN (zmiana LogZone/heartbeat/boot), nie periodic |
+| Historia                  | zmienna: ~800 dni stabilnie / ~16,6 doby w najgorszym razie (flapowanie) |
 | PID                       | odrzucony                                                  |
-| SPI (FRAM)                | odrzucony — zbyt wiele GPIO                                |
+| SPI (FRAM)                | przyjęty — 8KB event-driven logging, wymaga płytki z większą liczbą GPIO |
 
 ---
 
@@ -387,8 +496,8 @@ lib_deps =
 ```
 Etap 1 — Infrastruktura hardware
   1a. platformio.ini (board, lib deps)
-  1b. hardware_pins.h (ESP32-C3, I2C FRAM)
-  1c. fram_controller (I2C, layout 32KB, Buffer A/B, EnergyStore)
+  1b. hardware_pins.h (Waveshare ESP32-S3-Pico, SPI FRAM) — ✓ zrobione
+  1c. fram_controller (SPI, layout 8KB, ring buffer event-driven, EnergyStore)
   1d. temp_sensor (STS35 I2C single-shot, 15s, CRC8, trend bufor RAM 20 próbek)
 
 Etap 2 — Aktuatory

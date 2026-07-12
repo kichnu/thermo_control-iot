@@ -1,12 +1,10 @@
 #include "config.h"
 #include "core/logging.h"
 #include "hardware/fram_controller.h"
-#include <Wire.h>
-#include "hardware/hardware_pins.h"
 
 // Placeholder credentials — zastępowane przez FRAM po provisioning
-const char* WIFI_SSID          = "SETUP_REQUIRED";
-const char* WIFI_PASSWORD      = "SETUP_REQUIRED";
+const char* WIFI_SSID          = "KiG_2.4_IOT";
+const char* WIFI_PASSWORD      = "*qY4I@5&*%0lK1Q$U6UV7^S";
 const char* ADMIN_PASSWORD_HASH = nullptr;
 const char* DEVICE_ID          = "UNCONFIGURED_DEVICE";
 const IPAddress TRUSTED_PROXY_IP(10, 99, 0, 1);
@@ -43,13 +41,10 @@ void checkSystemAutoEnable() {
 // ============== FRAM INIT ==============
 
 void initSystemFRAM() {
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(100000);
-    delay(50);
     if (!initFRAM()) {
         LOG_ERROR("FRAM initialization failed!");
     } else {
-        LOG_INFO("FRAM ready (I2C 0x50)");
+        LOG_INFO("FRAM ready (SPI)");
     }
     s_system_disabled_ms = millis();  // start auto-enable timer
 }
