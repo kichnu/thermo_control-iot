@@ -8,7 +8,9 @@
 //  - histereza ON/OFF dla SSR grzałki
 //  - proporcjonalny PWM dla wentylatora (krzywa liniowa)
 //  - detekcja alarmu trendu (RAM bufor)
-//  - akumulator okna 30-minutowego → zapis do FRAM
+//  - logowanie zdarzeniowe do ring buffera FRAM (zmiana LogZone, heartbeat 24h,
+//    boot marker, flapping) — patrz LogZoneConfig/LogZone/TempRecord w
+//    algorithm_config.h
 
 class TempAlgorithm {
 public:
@@ -28,21 +30,28 @@ public:
     const ThermoConfig& getConfig() const  { return _config; }
     bool           setConfig(const ThermoConfig& cfg);
 
-    // Akumulator okna (do zapisu FRAM co 30 min)
-    bool           isWindowReady() const;   // true = minęło 30 min, rekord gotowy
-    TempRecord     consumeWindowRecord();   // pobierz i wyczyść akumulator
+    // Progi logowania zdarzeniowego (ring buffer FRAM) — osobna konfiguracja od ThermoConfig
+    bool           loadLogZoneConfig();
+    bool           saveLogZoneConfig();
+    const LogZoneConfig& getLogZoneConfig() const { return _logZoneConfig; }
+    bool           setLogZoneConfig(const LogZoneConfig& cfg);
 
 private:
     AlgorithmState   _state       = STATE_IDLE;
     uint8_t          _alarm_flags = 0;
     ThermoConfig     _config      = {};
-    WindowAccumulator _window     = {};
+
+    LogZoneConfig    _logZoneConfig  = {};
+    LogZone          _lastLoggedZone = ZONE_IDLE;
+    uint32_t         _lastLogTs      = 0;
+    bool             _bootLogged     = false;
 
     void _applyDefaults();
+    void _applyLogZoneDefaults();
     void _updateHeater(float temp);
     void _updateFan(float temp);
     void _updateAlarms(float temp);
-    void _accumulateSample(float temp, bool heater_on, uint8_t fan_pct);
+    void _updateLogging(float temp);
 };
 
 extern TempAlgorithm thermoAlgorithm;

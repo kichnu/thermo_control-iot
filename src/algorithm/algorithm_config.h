@@ -7,14 +7,7 @@
 // POMIAR TEMPERATURY
 // ============================================================
 #define TEMP_MEASURE_INTERVAL_S     15      // co ile sekund odczyt STS35
-#define TEMP_SAMPLES_PER_WINDOW     120     // próbek na okno 30 min (1800s / 15s)
 #define TREND_ALARM_SAMPLES         20      // próbek w RAM dla detekcji trendu
-
-// ============================================================
-// ZAPIS DO FRAM
-// ============================================================
-#define WINDOW_DURATION_S           1800    // 30 minut — jeden rekord FRAM
-#define WINDOW_DURATION_MS          (WINDOW_DURATION_S * 1000UL)
 
 // ============================================================
 // SENSOR FAULT
@@ -37,7 +30,28 @@
 #define DEFAULT_PULSES_PER_KWH      1000    // miernik energii
 
 // ============================================================
-// STANY AUTOMATU
+// LOGOWANIE ZDARZENIOWE — progi LogZone (konfigurowalne z GUI jako różnice
+// od target_temp) i stałe niekonfigurowalne (heartbeat, anti-flapping).
+// Kontekst doboru (2026-07-08): typowy swing regulacji w normalnych
+// warunkach ~0.4°C → NORMAL_DELTA=0.5°C daje 0.1°C marginesu, żeby granica
+// logowania nie triggerowała się przy każdym cyklu SSR ON/OFF. Szacowany
+// worst-case "jeszcze normalnego" odchylenia ~1°C → STEP_1=1.0°C.
+// ============================================================
+#define DEFAULT_LOG_ZONE_NORMAL_DELTA   0.5f   // połowa szerokości strefy prawidłowej wokół target_temp
+#define DEFAULT_LOG_ZONE_LOW_STEP_1     1.0f   // próg stopnia 1 poniżej target_temp
+#define DEFAULT_LOG_ZONE_LOW_STEP_2     2.0f   // próg stopnia 2 poniżej target_temp
+#define DEFAULT_LOG_ZONE_LOW_STEP_3     3.5f   // próg stopnia 3 poniżej target_temp
+#define DEFAULT_LOG_ZONE_HIGH_STEP_1    1.0f   // próg stopnia 1 powyżej target_temp
+#define DEFAULT_LOG_ZONE_HIGH_STEP_2    2.0f   // próg stopnia 2 powyżej target_temp
+#define DEFAULT_LOG_ZONE_HIGH_STEP_3    3.5f   // próg stopnia 3 powyżej target_temp
+
+#define LOG_HEARTBEAT_INTERVAL_S    86400UL    // 24h — wymuszony wpis mimo braku zmiany strefy (NIE z GUI)
+#define LOG_MIN_EVENT_INTERVAL_S    1800UL     // 30 min — bezwładność 240L wody wyklucza szybszą realną zmianę
+#define LOG_FLAPPING_COUNT          3          // ta sama granica przekroczona N× ...
+#define LOG_FLAPPING_WINDOW_S       21600UL    // ...w oknie 6h → flaga UNSTABLE (sygnał diagnostyczny, nie tłumione)
+
+// ============================================================
+// STANY AUTOMATU (sterowanie aktuatorami — bez zmian)
 // ============================================================
 enum AlgorithmState : uint8_t {
     STATE_IDLE          = 0,
@@ -50,12 +64,56 @@ enum AlgorithmState : uint8_t {
 };
 
 // ============================================================
-// BITMASKA ALARMÓW (alarm_flags w TempRecord)
+// BITMASKA _alarm_flags (warstwa sterowania — TempAlgorithm::getAlarmFlags(),
+// niezależna od kodowania ring buffera poniżej)
 // ============================================================
-#define ALARM_FLAG_TEMP_LOW     0x01
-#define ALARM_FLAG_TEMP_HIGH    0x02
-#define ALARM_FLAG_TREND        0x04
-#define ALARM_FLAG_SENSOR       0x08
+#define ALARM_FLAG_TEMP_LOW     0x01  // bit 0
+#define ALARM_FLAG_TEMP_HIGH    0x02  // bit 1
+#define ALARM_FLAG_TREND        0x04  // bit 2
+#define ALARM_FLAG_SENSOR       0x08  // bit 3
+
+// ============================================================
+// STREFY LOGOWANIA (LogZone) — TYLKO do ring buffera, nie sterują aktuatorami.
+// ALARM_LOW/HIGH rozbite na 3 stopnie względem DEFAULT_LOG_ZONE_*_STEP_*,
+// bo przekroczenie o 1°C i o 3.5°C to dla użytkownika zupełnie różna sytuacja.
+// ============================================================
+enum LogZone : uint8_t {
+    ZONE_IDLE          = 0,
+    ZONE_HEATING       = 1,
+    ZONE_COOLING       = 2,
+    ZONE_ALARM_LOW_1   = 3,   // deviation w (normal_delta, low_step_1]
+    ZONE_ALARM_LOW_2   = 4,   // deviation w (low_step_1, low_step_2]
+    ZONE_ALARM_LOW_3   = 5,   // deviation > low_step_2
+    ZONE_ALARM_HIGH_1  = 6,
+    ZONE_ALARM_HIGH_2  = 7,
+    ZONE_ALARM_HIGH_3  = 8,
+    ZONE_TREND_ALARM   = 9,
+    ZONE_SENSOR_FAULT  = 10,
+};
+
+enum LogReason : uint8_t {
+    REASON_ZONE_CHANGE = 0,   // przejście między strefami
+    REASON_HEARTBEAT   = 1,   // wymuszony wpis co LOG_HEARTBEAT_INTERVAL_S mimo braku zmiany
+    REASON_BOOT        = 2,   // znacznik restartu urządzenia
+};
+
+// ============================================================
+// KODOWANIE PÓL W TempRecord
+// zone_reason:       bity [3:0] LogZone, [5:4] LogReason, [6] UNSTABLE/flapping, [7] reserved
+// actuator_snapshot: bit  [0]   heater on/off w chwili zdarzenia
+//                    bity [7:1] fan_pct (0–100) w chwili zdarzenia
+// ============================================================
+#define TREC_ZONE_GET(zr)          (LogZone)((zr) & 0x0Fu)
+#define TREC_ZONE_SET(zr, z)       (((zr) & ~0x0Fu) | ((uint8_t)(z) & 0x0Fu))
+#define TREC_REASON_GET(zr)        (LogReason)(((zr) >> 4) & 0x03u)
+#define TREC_REASON_SET(zr, r)     (((zr) & ~0x30u) | (((uint8_t)(r) & 0x03u) << 4))
+#define TREC_UNSTABLE_GET(zr)      (((zr) >> 6) & 0x01u)
+#define TREC_UNSTABLE_SET(zr)      ((zr) | 0x40u)
+
+#define TREC_HEATER_ON_GET(as)     ((as) & 0x01u)
+#define TREC_HEATER_ON_SET(as, on) (((as) & ~0x01u) | ((on) ? 0x01u : 0x00u))
+#define TREC_FAN_PCT_GET(as)       (((as) >> 1) & 0x7Fu)
+#define TREC_FAN_PCT_SET(as, pct)  (((as) & 0x01u) | (((uint8_t)(pct) & 0x7Fu) << 1))
 
 // ============================================================
 // KONFIGURACJA ALGORYTMU (persystowana w FRAM)
@@ -75,21 +133,36 @@ struct ThermoConfig {
     uint8_t  is_configured;     // THERMO_CONFIG_MAGIC = ważna konfiguracja
     uint8_t  _pad;
 };
-static_assert(sizeof(ThermoConfig) == 40, "ThermoConfig must be 40 bytes");
+static_assert(sizeof(ThermoConfig) == 44, "ThermoConfig must be 44 bytes"); // 10 float + u16 + 2×u8 = 44B (pre-existing assert błędnie mówił 40)
 
 // ============================================================
-// REKORD RING BUFFER (persystowany w FRAM co 30 min)
+// PROGI LOGOWANIA ZDARZENIOWEGO (persystowane w FRAM, konfigurowalne z GUI
+// jako różnice od target_temp — patrz DEFAULT_LOG_ZONE_* powyżej)
+// ============================================================
+struct LogZoneConfig {
+    float normal_delta;   // połowa szerokości strefy prawidłowej wokół target_temp
+    float low_step_1;     // próg stopnia 1 poniżej target_temp
+    float low_step_2;     // próg stopnia 2 poniżej target_temp
+    float low_step_3;     // próg stopnia 3 poniżej target_temp
+    float high_step_1;    // próg stopnia 1 powyżej target_temp
+    float high_step_2;    // próg stopnia 2 powyżej target_temp
+    float high_step_3;    // próg stopnia 3 powyżej target_temp
+};
+static_assert(sizeof(LogZoneConfig) == 28, "LogZoneConfig must be 28 bytes");
+// Walidacja przy zapisie z GUI: low_step_1 < low_step_2 < low_step_3 (analogicznie high_*),
+// i low_step_1/high_step_1 > normal_delta — inaczej strefy się nakładają/odwracają.
+
+// ============================================================
+// REKORD RING BUFFER — event-driven (zmiana LogZone / heartbeat / boot,
+// NIE periodic co 30 min)
 // ============================================================
 struct TempRecord {
-    uint32_t timestamp;         // Unix UTC — koniec okna 30-minutowego
-    int16_t  temp_x10;          // średnia temp × 10 (250 = 25.0°C)
-    uint8_t  state;             // AlgorithmState dominujący w oknie
-    uint8_t  alarm_flags;       // OR flag alarmów z całego okna
-    uint8_t  heater_pct;        // % próbek ze SSR ON (0–100)
-    uint8_t  fan_pct;           // średnie wypełnienie PWM (0–100)
-    uint16_t _pad;
+    uint32_t timestamp;           // 4B — Unix UTC zdarzenia
+    int16_t  temp_x10;            // 2B — temp × 10 w chwili zdarzenia (250 = 25.0°C)
+    uint8_t  zone_reason;         // 1B — patrz TREC_ZONE_*/TREC_REASON_*/TREC_UNSTABLE_* powyżej
+    uint8_t  actuator_snapshot;   // 1B — patrz TREC_HEATER_ON_*/TREC_FAN_PCT_* powyżej
 };
-static_assert(sizeof(TempRecord) == 12, "TempRecord must be 12 bytes");
+static_assert(sizeof(TempRecord) == 8, "TempRecord must be 8 bytes");
 
 // ============================================================
 // ENERGIA (persystowana osobno w FRAM)
@@ -100,20 +173,6 @@ struct EnergyStore {
     uint16_t pulses_per_kwh;    // kopia z ThermoConfig
     uint16_t checksum;
 };
-static_assert(sizeof(EnergyStore) == 16, "EnergyStore must be 16 bytes");
-
-// ============================================================
-// AKUMULATOR OKNA (w RAM, nie persystowany)
-// ============================================================
-struct WindowAccumulator {
-    int32_t  temp_sum_x10;      // suma temp × 10 z próbek
-    uint16_t heater_on_count;   // liczba próbek ze SSR ON
-    uint16_t fan_pct_sum;       // suma wypełnienia PWM
-    uint8_t  alarm_flags_or;    // OR wszystkich flag alarmów
-    uint8_t  sample_count;      // liczba zebranych próbek (max 120)
-    uint8_t  dominant_state;    // stan z najdłuższym czasem
-    uint8_t  _pad;
-    uint32_t window_start_ts;   // timestamp początku okna
-};
+static_assert(sizeof(EnergyStore) == 12, "EnergyStore must be 12 bytes"); // 2×u32 + 2×u16 = 12B, checksum wbudowany (pre-existing assert błędnie mówił 16)
 
 #endif // ALGORITHM_CONFIG_H
