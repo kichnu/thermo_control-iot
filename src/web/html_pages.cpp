@@ -48,10 +48,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 
 <div class="card">
   <h2>System</h2>
-  <small id="sysdis" style="color:#ffb300;"></small><br>
-  <button id="btnSystemToggle">Włącz / wyłącz system</button>
-  <button id="btnAck">Potwierdź alarm</button>
-  <button id="btnSystemReset" class="danger">Reset automatu stanów</button>
+  <button id="btnSystemToggle">…</button>
+  <button id="btnAck">Wycisz alarm</button>
   <button id="btnLogout">Wyloguj</button>
 </div>
 
@@ -60,6 +58,12 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <input type="range" id="fanSlider" min="0" max="100" value="0" style="width:70%;vertical-align:middle;">
   <span id="fanSliderVal">0</span>%
   <button id="fanSet">Ustaw</button>
+</div>
+
+<div class="card">
+  <h2>Test: sterowanie grzałką ręczne</h2>
+  <button id="heaterOn">Grzałka ON</button>
+  <button id="heaterOff">Grzałka OFF</button>
 </div>
 
 <div class="card">
@@ -84,10 +88,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <div class="row"><label for="normal_delta">Strefa prawidłowa (±) [°C]</label><input type="number" step="0.1" id="normal_delta"></div>
   <div class="row"><label for="low_step_1">Poniżej target — stopień 1 [°C]</label><input type="number" step="0.1" id="low_step_1"></div>
   <div class="row"><label for="low_step_2">Poniżej target — stopień 2 [°C]</label><input type="number" step="0.1" id="low_step_2"></div>
-  <div class="row"><label for="low_step_3">Poniżej target — stopień 3 [°C]</label><input type="number" step="0.1" id="low_step_3"></div>
   <div class="row"><label for="high_step_1">Powyżej target — stopień 1 [°C]</label><input type="number" step="0.1" id="high_step_1"></div>
   <div class="row"><label for="high_step_2">Powyżej target — stopień 2 [°C]</label><input type="number" step="0.1" id="high_step_2"></div>
-  <div class="row"><label for="high_step_3">Powyżej target — stopień 3 [°C]</label><input type="number" step="0.1" id="high_step_3"></div>
   <button id="btnSaveLogZone">Zapisz</button>
   <div id="err_logzone"></div>
 </div>
@@ -108,15 +110,14 @@ const REASON_NAMES = ['ZONE_CHANGE','HEARTBEAT','BOOT'];
 
 async function refresh() {
   try {
-    const r = await fetch('/api/status');
-    if (r.status === 401) { window.location.href = '/login'; return; }
+    const r = await fetch('api/status');
+    if (r.status === 401) { window.location.href = 'login'; return; }
     const d = await r.json();
     document.getElementById('temp').textContent = d.temp_c.toFixed(1) + '°C';
     document.getElementById('state').textContent = d.state;
     document.getElementById('heater').textContent = d.heater_on ? 'ON' : 'OFF';
     document.getElementById('fan').textContent = d.fan_pct + '%';
-    document.getElementById('sysdis').textContent = d.system_disabled
-      ? '⏸ System wstrzymany — ręczne sterowanie aktywne' : '▶ Algorytm aktywny — nadpisze ręczne ustawienie';
+    document.getElementById('btnSystemToggle').textContent = d.system_disabled ? 'Auto Mode' : 'Service Mode';
 
     const flags = [];
     if (d.alarm_flags & 0x01) flags.push('TEMP_LOW');
@@ -125,7 +126,7 @@ async function refresh() {
     if (d.alarm_flags & 0x08) flags.push('SENSOR');
     document.getElementById('alarms').textContent = flags.length ? flags.join(', ') : 'brak';
 
-    const e = await fetch('/api/energy');
+    const e = await fetch('api/energy');
     const en = await e.json();
     document.getElementById('energy_today').textContent = en.today_kwh.toFixed(3);
     document.getElementById('power').textContent = en.power_w.toFixed(0);
@@ -133,7 +134,7 @@ async function refresh() {
 }
 
 async function loadThermoConfig() {
-  const r = await fetch('/api/thermo-config');
+  const r = await fetch('api/thermo-config');
   const c = await r.json();
   for (const k of ['target_temp','heat_hyst','cool_start','cool_full','hysteresis_band',
                     'alarm_delta_low','alarm_delta_high','trend_alarm_delta','temp_offset',
@@ -143,16 +144,16 @@ async function loadThermoConfig() {
 }
 
 async function loadLogZoneConfig() {
-  const r = await fetch('/api/log-zone-config');
+  const r = await fetch('api/log-zone-config');
   const c = await r.json();
-  for (const k of ['normal_delta','low_step_1','low_step_2','low_step_3',
-                    'high_step_1','high_step_2','high_step_3']) {
+  for (const k of ['normal_delta','low_step_1','low_step_2',
+                    'high_step_1','high_step_2']) {
     if (c[k] !== undefined) document.getElementById(k).value = c[k];
   }
 }
 
 async function loadHistory() {
-  const r = await fetch('/api/history');
+  const r = await fetch('api/history');
   const d = await r.json();
   const tbody = document.getElementById('historyBody');
   tbody.innerHTML = '';
@@ -171,26 +172,30 @@ document.getElementById('fanSlider').addEventListener('input', (e) => {
 });
 document.getElementById('fanSet').addEventListener('click', async () => {
   const pct = document.getElementById('fanSlider').value;
-  await fetch('/api/test/fan', { method: 'POST', body: new URLSearchParams({pct}) });
+  await fetch('api/test/fan', { method: 'POST', body: new URLSearchParams({pct}) });
+  refresh();
+});
+
+document.getElementById('heaterOn').addEventListener('click', async () => {
+  await fetch('api/test/heater', { method: 'POST', body: new URLSearchParams({on: '1'}) });
+  refresh();
+});
+document.getElementById('heaterOff').addEventListener('click', async () => {
+  await fetch('api/test/heater', { method: 'POST', body: new URLSearchParams({on: '0'}) });
   refresh();
 });
 
 document.getElementById('btnSystemToggle').addEventListener('click', async () => {
-  await fetch('/api/system-toggle', { method: 'POST' });
+  await fetch('api/system-toggle', { method: 'POST' });
   refresh();
 });
 document.getElementById('btnAck').addEventListener('click', async () => {
-  await fetch('/api/reset-alarm', { method: 'POST' });
-  refresh();
-});
-document.getElementById('btnSystemReset').addEventListener('click', async () => {
-  if (!confirm('Zresetować automat stanów?')) return;
-  await fetch('/api/system-reset', { method: 'POST' });
+  await fetch('api/mute-alarm', { method: 'POST' });
   refresh();
 });
 document.getElementById('btnLogout').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
-  window.location.href = '/login';
+  await fetch('api/logout', { method: 'POST' });
+  window.location.href = 'login';
 });
 
 document.getElementById('btnSaveThermo').addEventListener('click', async () => {
@@ -200,18 +205,18 @@ document.getElementById('btnSaveThermo').addEventListener('click', async () => {
                     'heater_watt','pulses_per_kwh']) {
     body[k] = document.getElementById(k).value;
   }
-  const r = await fetch('/api/thermo-config', { method: 'POST', body: new URLSearchParams(body) });
+  const r = await fetch('api/thermo-config', { method: 'POST', body: new URLSearchParams(body) });
   const j = await r.json();
   document.getElementById('err_thermo').textContent = j.ok ? '' : (j.error || 'Błąd zapisu');
 });
 
 document.getElementById('btnSaveLogZone').addEventListener('click', async () => {
   const body = {};
-  for (const k of ['normal_delta','low_step_1','low_step_2','low_step_3',
-                    'high_step_1','high_step_2','high_step_3']) {
+  for (const k of ['normal_delta','low_step_1','low_step_2',
+                    'high_step_1','high_step_2']) {
     body[k] = document.getElementById(k).value;
   }
-  const r = await fetch('/api/log-zone-config', { method: 'POST', body: new URLSearchParams(body) });
+  const r = await fetch('api/log-zone-config', { method: 'POST', body: new URLSearchParams(body) });
   const j = await r.json();
   document.getElementById('err_logzone').textContent = j.ok ? '' : (j.error || 'Błąd zapisu');
 });
@@ -263,8 +268,8 @@ document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault();
   const password = document.getElementById('password').value;
   const body = new URLSearchParams({password});
-  const r = await fetch('/api/login', { method: 'POST', body });
-  if (r.ok) { window.location.href = '/'; }
+  const r = await fetch('api/login', { method: 'POST', body });
+  if (r.ok) { window.location.href = './'; }
   else { document.getElementById('err').textContent = 'Błędne hasło'; }
 });
 </script>

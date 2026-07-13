@@ -65,16 +65,18 @@ void TempAlgorithm::update() {
     }
 
     if (!isTempValid()) {
-        if (getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD) {
+        bool sensorFault = getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD;
+        _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault);
+        if (sensorFault) {
             _state = STATE_SENSOR_FAULT;
-            _alarm_flags |= ALARM_FLAG_SENSOR;
             heaterEmergencyOff();
             fanEmergencyOff();
-            setBuzzerMode(BUZZER_ALARM);
+            if (!(_muted_flags & ALARM_FLAG_SENSOR)) setBuzzerMode(BUZZER_ALARM);
             _updateLogging(getTemperature());  // loguje z ostatnią znaną temperaturą
         }
         return;
     }
+    _setAlarmFlag(ALARM_FLAG_SENSOR, false);  // czujnik znów sprawny — czyści flagę i mute
 
     float temp = getTemperature();
     _updateAlarms(temp);
@@ -107,10 +109,8 @@ void TempAlgorithm::_applyLogZoneDefaults() {
     _logZoneConfig.normal_delta = DEFAULT_LOG_ZONE_NORMAL_DELTA;
     _logZoneConfig.low_step_1   = DEFAULT_LOG_ZONE_LOW_STEP_1;
     _logZoneConfig.low_step_2   = DEFAULT_LOG_ZONE_LOW_STEP_2;
-    _logZoneConfig.low_step_3   = DEFAULT_LOG_ZONE_LOW_STEP_3;
     _logZoneConfig.high_step_1  = DEFAULT_LOG_ZONE_HIGH_STEP_1;
     _logZoneConfig.high_step_2  = DEFAULT_LOG_ZONE_HIGH_STEP_2;
-    _logZoneConfig.high_step_3  = DEFAULT_LOG_ZONE_HIGH_STEP_3;
 }
 
 void TempAlgorithm::_updateHeater(float temp) {
@@ -134,44 +134,63 @@ void TempAlgorithm::_updateFan(float temp) {
     else if (spd == 0 && _state == STATE_COOLING) _state = STATE_IDLE;
 }
 
+void TempAlgorithm::_setAlarmFlag(uint8_t flag, bool active) {
+    if (active) {
+        _alarm_flags |= flag;
+    } else if (_alarm_flags & flag) {
+        _alarm_flags &= ~flag;
+        _muted_flags &= ~flag;  // warunek ustąpił — kolejne wystąpienie znów zadźwięczy
+    }
+}
+
 void TempAlgorithm::_updateAlarms(float temp) {
     float alarm_low_thresh  = _config.target_temp - _config.alarm_delta_low;
     float alarm_high_thresh = _config.target_temp + _config.alarm_delta_high;
 
-    if (temp < alarm_low_thresh) {
+    bool low_now  = (temp < alarm_low_thresh);
+    bool high_now = (!low_now && temp > alarm_high_thresh);
+
+    _setAlarmFlag(ALARM_FLAG_TEMP_LOW,  low_now);
+    _setAlarmFlag(ALARM_FLAG_TEMP_HIGH, high_now);
+
+    if (low_now) {
         _state = STATE_ALARM_LOW;
-        _alarm_flags |= ALARM_FLAG_TEMP_LOW;
         setHeaterOn();
         setFanSpeed(0);
-        setBuzzerMode(BUZZER_ALARM);
+        if (!(_muted_flags & ALARM_FLAG_TEMP_LOW)) setBuzzerMode(BUZZER_ALARM);
         return;
     }
 
-    if (temp > alarm_high_thresh) {
+    if (high_now) {
         _state = STATE_ALARM_HIGH;
-        _alarm_flags |= ALARM_FLAG_TEMP_HIGH;
         setHeaterOff();
         setFanSpeed(100);
-        setBuzzerMode(BUZZER_ALARM);
+        if (!(_muted_flags & ALARM_FLAG_TEMP_HIGH)) setBuzzerMode(BUZZER_ALARM);
         return;
     }
 
-    // Temp wróciła do zakresu — wyjdź ze stanu alarmowego (flaga zostaje aż do
-    // ręcznego acknowledgeAlarm(), to celowe: latching alarm, nie auto-clear)
+    // Temp wróciła do zakresu — wyjdź ze stanu alarmowego
+    // TODO (2026-07, do sprawdzenia — NIE naprawiać bez osobnej decyzji): STATE_TREND_ALARM
+    // nie ma analogicznego auto-wyjścia niżej — gdy trend_now przejdzie true→false, _state
+    // zostaje STATE_TREND_ALARM na stałe (w przeciwieństwie do ALARM_LOW/HIGH, które co tick
+    // same wracają do IDLE). _alarm_flags/buzzer już się poprawnie czyszczą przez
+    // _setAlarmFlag(), ale _state/getStateString() w GUI zostaje błędny. Po usunięciu
+    // przycisku "Reset automatu stanów" nie ma już żadnego sposobu, by to ręcznie odblokować —
+    // trend powinien działać tak samo jak pozostałe alarmy (self-heal do IDLE).
     if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH) {
         _state = STATE_IDLE;
     }
 
     // Trend: SSR ON i szybki spadek temp w oknie 5 min (patrz ARCHITECTURE_SKELETON.md)
-    if (isHeaterOn() && isTrendAlarm(_config.trend_alarm_delta)) {
+    bool trend_now = isHeaterOn() && isTrendAlarm(_config.trend_alarm_delta);
+    _setAlarmFlag(ALARM_FLAG_TREND, trend_now);
+    if (trend_now) {
         _state = STATE_TREND_ALARM;
-        _alarm_flags |= ALARM_FLAG_TREND;
-        setBuzzerMode(BUZZER_WARNING);
+        if (!(_muted_flags & ALARM_FLAG_TREND)) setBuzzerMode(BUZZER_WARNING);
         return;
     }
 
-    // Brak żadnej latched flagi — cisza. Jeśli coś jest wciąż latched (np. ALARM_LOW
-    // sprzed chwili), buzzer świadomie zostaje na ostatnim wzorcu do acknowledgeAlarm().
+    // Nic aktywnego — cisza (SENSOR obsługiwany osobno w update()).
     if (_alarm_flags == 0) {
         setBuzzerMode(BUZZER_OFF);
     }
@@ -262,8 +281,10 @@ bool TempAlgorithm::setLogZoneConfig(const LogZoneConfig& cfg) {
     return saveLogZoneConfig();
 }
 
-void TempAlgorithm::acknowledgeAlarm()     { _alarm_flags = 0; _state = STATE_IDLE; setBuzzerMode(BUZZER_OFF); }
-void TempAlgorithm::resetStateMachine()    { _state = STATE_IDLE; _alarm_flags = 0; setBuzzerMode(BUZZER_OFF); }
+void TempAlgorithm::muteActiveAlarms() {
+    _muted_flags |= _alarm_flags;  // wycisza tylko to, co jest aktywne w tej chwili
+    setBuzzerMode(BUZZER_OFF);
+}
 
 const char* TempAlgorithm::getStateString() const {
     switch (_state) {

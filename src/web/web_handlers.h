@@ -16,9 +16,8 @@
 //   POST /api/thermo-config
 //   GET  /api/log-zone-config
 //   POST /api/log-zone-config
-//   POST /api/reset-alarm
+//   POST /api/mute-alarm
 //   POST /api/system-toggle
-//   POST /api/system-reset
 //   GET  /api/energy
 //   POST /api/energy-reset-day
 // ============================================================
@@ -31,14 +30,16 @@ void handleGetThermoConfig(AsyncWebServerRequest* request);
 void handleSetThermoConfig(AsyncWebServerRequest* request);
 void handleGetLogZoneConfig(AsyncWebServerRequest* request);
 void handleSetLogZoneConfig(AsyncWebServerRequest* request);
-void handleResetAlarm(AsyncWebServerRequest* request);
+void handleMuteAlarm(AsyncWebServerRequest* request);
 void handleSystemToggle(AsyncWebServerRequest* request);
-void handleSystemReset(AsyncWebServerRequest* request);
 void handleEnergy(AsyncWebServerRequest* request);
 void handleEnergyResetDay(AsyncWebServerRequest* request);
 
 // Test: ręczne sterowanie wentylatorem z GUI (bypass algorytmu) — POST pct=0-100
 void handleTestFan(AsyncWebServerRequest* request);
+
+// Test: ręczne sterowanie grzałką z GUI (bypass algorytmu) — POST on=0|1
+void handleTestHeater(AsyncWebServerRequest* request);
 
 // ============================================================
 // Auth + strony statyczne (bez zmian z ATO)

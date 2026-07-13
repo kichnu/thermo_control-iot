@@ -45,6 +45,8 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 | C-05 | Profile temperaturowe (tarlisko, kuracja solna)     | [v2]   | maks. 3 profile, przełączanie w GUI      |
 | C-06 | Detekcja szybkiego spadku temp (awaria grzałki)     | [v1]   | Δ > X°C / 10 min → alarm trend           |
 | C-07 | Upgrade do PI time-proportioning (SSR)              | [ ]    | firmware only, bez zmian HW, gdy zajdzie |
+| C-08 | Auto Mode / Service Mode (rename + UX)              | [v1]   | 2026-07: to samo co isSystemDisabled(), etykieta jak w dolewce |
+| C-09 | Tryb warunkowego odchylenia temp. (sytuacje skrajne)| [ ]    | 2026-07: DO DYSKUSJI. User decyduje o wielkości odchyłki, ale GUI musi to jawnie "krzyczeć" — nie naginać ustawień po cichu. Niezaprojektowane. |
 
 ---
 
@@ -52,7 +54,7 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 
 | ID   | Funkcjonalność                                      | Status | Uwagi                                    |
 |------|-----------------------------------------------------|--------|------------------------------------------|
-| D-01 | Alarm temp LOW / HIGH (progi w config)              | [v1]   | buzzer FreeRTOS task                     |
+| D-01 | Alarm temp LOW / HIGH (progi w config)              | [v1]   | buzzer FreeRTOS task; 2026-07: mute per-epizod (`/api/mute-alarm`) zamiast pełnego ack — flagi live, nie latchowane |
 | D-02 | Alarm awaria czujnika (3× błąd CRC STS35)           | [v1]   | SSR OFF + fan OFF + buzzer               |
 | D-03 | Alarm trend temp (Δ > próg / interwał)              | [v1]   | wczesne wykrycie awarii grzałki          |
 | D-04 | Alarm przekroczenia energii dziennej                | [v2]   | suma kWh z miernika > limit/dzień        |
@@ -109,7 +111,7 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 Lista v1 = minimum viable product:
 A-01, A-02, A-03
 B-01, B-02, B-04
-C-01, C-02, C-06
+C-01, C-02, C-06, C-08
 D-01, D-02, D-03
 E-01, E-02, E-03, E-04, E-05, E-07
 F-01, F-02, F-03

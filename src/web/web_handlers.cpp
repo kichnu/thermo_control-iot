@@ -8,6 +8,7 @@
 #include "hardware/fan_controller.h"
 #include "hardware/energy_meter.h"
 #include "hardware/fram_controller.h"
+#include "hardware/buzzer_controller.h"
 #include "config/config.h"
 #include "web_server.h"
 #include "core/logging.h"
@@ -23,12 +24,12 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/thermo-config",    HTTP_POST, requireAuth(handleSetThermoConfig));
     server.on("/api/log-zone-config",  HTTP_GET,  requireAuth(handleGetLogZoneConfig));
     server.on("/api/log-zone-config",  HTTP_POST, requireAuth(handleSetLogZoneConfig));
-    server.on("/api/reset-alarm",      HTTP_POST, requireAuth(handleResetAlarm));
+    server.on("/api/mute-alarm",       HTTP_POST, requireAuth(handleMuteAlarm));
     server.on("/api/system-toggle",    HTTP_POST, requireAuth(handleSystemToggle));
-    server.on("/api/system-reset",     HTTP_POST, requireAuth(handleSystemReset));
     server.on("/api/energy",           HTTP_GET,  requireAuth(handleEnergy));
     server.on("/api/energy-reset-day", HTTP_POST, requireAuth(handleEnergyResetDay));
     server.on("/api/test/fan",         HTTP_POST, requireAuth(handleTestFan));
+    server.on("/api/test/heater",      HTTP_POST, requireAuth(handleTestHeater));
 }
 
 void handleStatus(AsyncWebServerRequest* request) {
@@ -137,10 +138,8 @@ void handleGetLogZoneConfig(AsyncWebServerRequest* request) {
     doc["normal_delta"] = cfg.normal_delta;
     doc["low_step_1"]   = cfg.low_step_1;
     doc["low_step_2"]   = cfg.low_step_2;
-    doc["low_step_3"]   = cfg.low_step_3;
     doc["high_step_1"]  = cfg.high_step_1;
     doc["high_step_2"]  = cfg.high_step_2;
-    doc["high_step_3"]  = cfg.high_step_3;
     String out;
     serializeJson(doc, out);
     request->send(200, "application/json", out);
@@ -152,14 +151,12 @@ void handleSetLogZoneConfig(AsyncWebServerRequest* request) {
     applyFloatParam(request, "normal_delta", cfg.normal_delta);
     applyFloatParam(request, "low_step_1",   cfg.low_step_1);
     applyFloatParam(request, "low_step_2",   cfg.low_step_2);
-    applyFloatParam(request, "low_step_3",   cfg.low_step_3);
     applyFloatParam(request, "high_step_1",  cfg.high_step_1);
     applyFloatParam(request, "high_step_2",  cfg.high_step_2);
-    applyFloatParam(request, "high_step_3",  cfg.high_step_3);
 
     // Walidacja monotoniczności (patrz algorithm_config.h / ARCHITECTURE_SKELETON.md)
-    if (!(cfg.low_step_1 < cfg.low_step_2 && cfg.low_step_2 < cfg.low_step_3) ||
-        !(cfg.high_step_1 < cfg.high_step_2 && cfg.high_step_2 < cfg.high_step_3) ||
+    if (cfg.low_step_1 >= cfg.low_step_2 ||
+        cfg.high_step_1 >= cfg.high_step_2 ||
         cfg.low_step_1 <= cfg.normal_delta || cfg.high_step_1 <= cfg.normal_delta) {
         request->send(400, "application/json",
             "{\"ok\":false,\"error\":\"steps must be monotonic and > normal_delta\"}");
@@ -174,18 +171,21 @@ void handleSetLogZoneConfig(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
-void handleResetAlarm(AsyncWebServerRequest* request) {
-    thermoAlgorithm.acknowledgeAlarm();
+void handleMuteAlarm(AsyncWebServerRequest* request) {
+    thermoAlgorithm.muteActiveAlarms();
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleSystemToggle(AsyncWebServerRequest* request) {
-    setSystemState(isSystemDisabled());
-    request->send(200, "application/json", "{\"ok\":true}");
-}
-
-void handleSystemReset(AsyncWebServerRequest* request) {
-    thermoAlgorithm.resetStateMachine();
+    bool wasDisabled = isSystemDisabled();
+    setSystemState(wasDisabled);  // toggle
+    if (isSystemDisabled()) {
+        // Wejście w Service Mode — algorytm przestaje sterować buzzerem (patrz
+        // TempAlgorithm::update()), więc trzeba go wyciszyć jawnie tutaj.
+        // _alarm_flags NIE są czyszczone — status ostatniego alarmu zostaje
+        // widoczny w GUI, cichnie tylko dźwięk.
+        setBuzzerMode(BUZZER_OFF);
+    }
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -219,6 +219,19 @@ void handleTestFan(AsyncWebServerRequest* request) {
     }
     setFanSpeed((uint8_t)pct);
     LOG_INFO("Test: fan set to %d%% via GUI", pct);
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// Test: ręczne sterowanie grzałką — bypass algorytmu (TempAlgorithm nadpisze
+// przy kolejnym update(), chyba że system jest wstrzymany, patrz isSystemDisabled())
+void handleTestHeater(AsyncWebServerRequest* request) {
+    if (!request->hasParam("on", true)) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing on\"}");
+        return;
+    }
+    bool on = request->getParam("on", true)->value().toInt() != 0;
+    on ? setHeaterOn() : setHeaterOff();
+    LOG_INFO("Test: heater set to %s via GUI", on ? "ON" : "OFF");
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
