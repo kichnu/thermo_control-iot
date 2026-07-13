@@ -1,6 +1,7 @@
 #include "session_manager.h"
 #include "../config/config.h"
 #include "../core/logging.h"
+#include <esp_random.h>
 
 // ✅ FIX 3: Add session limits to prevent memory exhaustion
 static const size_t MAX_TOTAL_SESSIONS = 10;       // Maximum total sessions
@@ -88,10 +89,10 @@ String createSession(IPAddress ip) {
     Session newSession;
     newSession.token = "";
     
-    // ✅ Improved token generation with better randomness
-    randomSeed(millis() ^ micros() ^ analogRead(A0));
+    // Token generation via hardware RNG — nie dotyka żadnego GPIO (patrz esp_random.h),
+    // w przeciwieństwie do poprzedniego analogRead(A0), który kolidował z BUZZER_PIN (GPIO1).
     for (int i = 0; i < 32; i++) {
-        newSession.token += String(random(0, 16), HEX);
+        newSession.token += String(esp_random() % 16, HEX);
     }
     
     newSession.ip = ip;
