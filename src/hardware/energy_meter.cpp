@@ -3,13 +3,14 @@
 #include "hardware/fram_controller.h"
 #include "core/logging.h"
 
-// TODO: Etap 2c — implementacja
-
 static volatile uint32_t s_pulse_count    = 0;
 static uint32_t          s_day_start      = 0;
 static uint16_t          s_pulses_per_kwh = 1000;
 static uint32_t          s_last_pulse_ms  = 0;
 static uint32_t          s_prev_pulse_ms  = 0;
+static uint32_t          s_last_saved_count = 0;  // do progu zapisu co N impulsów
+
+static const uint32_t ENERGY_SAVE_EVERY_N_PULSES = 10;
 
 void IRAM_ATTR onEnergyPulse() {
     s_prev_pulse_ms = s_last_pulse_ms;
@@ -26,7 +27,12 @@ void initEnergyMeter(uint16_t pulses_per_kwh) {
 }
 
 void updateEnergyMeter() {
-    // TODO: zapis do FRAM co 10 impulsów
+    uint32_t count;
+    noInterrupts(); count = s_pulse_count; interrupts();
+
+    if (count - s_last_saved_count >= ENERGY_SAVE_EVERY_N_PULSES) {
+        energySaveToFRAM();
+    }
 }
 
 void  setEnergyPulsesPerKwh(uint16_t ppk) { s_pulses_per_kwh = ppk; }
@@ -63,5 +69,36 @@ void energyResetDayCounter() {
     energySaveToFRAM();
 }
 
-void energyLoadFromFRAM() { /* TODO: Etap 4e */ }
-void energySaveToFRAM()   { /* TODO: Etap 4e */ }
+void energyLoadFromFRAM() {
+    EnergyStore store;
+    if (!loadEnergyStoreFromFRAM(store)) {
+        LOG_WARNING("EnergyStore not found/invalid in FRAM — starting from 0");
+        s_last_saved_count = 0;
+        return;
+    }
+
+    noInterrupts();
+    s_pulse_count = store.total_pulses;
+    interrupts();
+    s_day_start = store.day_start_pulses;
+    if (store.pulses_per_kwh > 0) s_pulses_per_kwh = store.pulses_per_kwh;
+    s_last_saved_count = store.total_pulses;
+
+    LOG_INFO("EnergyStore loaded from FRAM: total_pulses=%u day_start=%u ppkwh=%u",
+             store.total_pulses, store.day_start_pulses, s_pulses_per_kwh);
+}
+
+void energySaveToFRAM() {
+    uint32_t count;
+    noInterrupts(); count = s_pulse_count; interrupts();
+
+    EnergyStore store;
+    store.total_pulses     = count;
+    store.day_start_pulses = s_day_start;
+    store.pulses_per_kwh   = s_pulses_per_kwh;
+    store.checksum         = 0;  // przeliczane wewnątrz saveEnergyStoreToFRAM()
+
+    if (saveEnergyStoreToFRAM(store)) {
+        s_last_saved_count = count;
+    }
+}

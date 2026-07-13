@@ -231,9 +231,9 @@ bool saveLogZoneConfigToFRAM(const LogZoneConfig& cfg) {
     uint16_t chksum = calculateChecksum((const uint8_t*)&cfg, sizeof(LogZoneConfig));
     framWrite(FRAM_ADDR_LOG_ZONE_CHKSUM, &chksum, 2);
 
-    LOG_INFO("LogZoneConfig saved: normal=%.1f low=%.1f/%.1f/%.1f high=%.1f/%.1f/%.1f",
-             cfg.normal_delta, cfg.low_step_1, cfg.low_step_2, cfg.low_step_3,
-             cfg.high_step_1, cfg.high_step_2, cfg.high_step_3);
+    LOG_INFO("LogZoneConfig saved: normal=%.1f low=%.1f/%.1f high=%.1f/%.1f",
+             cfg.normal_delta, cfg.low_step_1, cfg.low_step_2,
+             cfg.high_step_1, cfg.high_step_2);
     return true;
 }
 
@@ -252,6 +252,41 @@ bool loadLogZoneConfigFromFRAM(LogZoneConfig& cfg) {
     }
 
     cfg = tmp;
+    return true;
+}
+
+// ===============================
+// ENERGY STORE SECTION (checksum wbudowany w struct, jak FRAMCredentials)
+// ===============================
+
+bool saveEnergyStoreToFRAM(const EnergyStore& store) {
+    if (!framInitialized) return false;
+
+    EnergyStore tmp = store;
+    size_t checksum_offset = offsetof(EnergyStore, checksum);
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+
+    framWrite(FRAM_ADDR_ENERGY_STORE, &tmp, sizeof(EnergyStore));
+
+    LOG_INFO("EnergyStore saved: total_pulses=%u day_start=%u ppkwh=%u",
+             tmp.total_pulses, tmp.day_start_pulses, tmp.pulses_per_kwh);
+    return true;
+}
+
+bool loadEnergyStoreFromFRAM(EnergyStore& store) {
+    if (!framInitialized) return false;
+
+    EnergyStore tmp;
+    fram.read(FRAM_ADDR_ENERGY_STORE, (uint8_t*)&tmp, sizeof(EnergyStore));
+
+    size_t checksum_offset = offsetof(EnergyStore, checksum);
+    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+    if (calc != tmp.checksum) {
+        LOG_WARNING("EnergyStore checksum mismatch — using defaults (0)");
+        return false;
+    }
+
+    store = tmp;
     return true;
 }
 

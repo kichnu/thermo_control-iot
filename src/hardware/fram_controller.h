@@ -42,6 +42,15 @@ bool saveLogZoneConfigToFRAM(const LogZoneConfig& cfg);
 bool loadLogZoneConfigFromFRAM(LogZoneConfig& cfg);
 
 // ===============================
+// ENERGY STORE SECTION (licznik impulsów miernika energii, checksum wbudowany w struct)
+// ===============================
+
+struct EnergyStore;
+
+bool saveEnergyStoreToFRAM(const EnergyStore& store);
+bool loadEnergyStoreFromFRAM(EnergyStore& store);
+
+// ===============================
 // RING BUFFER SECTION (TempRecord, event-driven — patrz fram_constants.h)
 // ===============================
 
