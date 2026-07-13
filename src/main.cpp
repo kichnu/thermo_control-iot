@@ -118,6 +118,7 @@ void loop() {
         if ((uint32_t)getUnixTimestamp() >= g_restartAtTs) {
             LOG_INFO("=== DAILY RESTART ===");
             heaterEmergencyOff();
+            energyResetDayCounter();  // nowa doba — zeruje "dziś" i zapisuje stan do FRAM
             delay(1000);
             ESP.restart();
         }
@@ -139,6 +140,8 @@ void loop() {
         updateSessionManager();
         updateRateLimiter();
         updateWiFi();
+        updateEnergyMeter();
+        updateRTCSync();
     }
 
     delay(10);

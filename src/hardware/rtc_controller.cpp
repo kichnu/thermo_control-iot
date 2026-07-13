@@ -518,3 +518,16 @@ bool rtcNeedsSynchronization() {
 bool isBatteryIssueDetected() {
     return batteryIssueDetected;
 }
+
+// Okresowy resync z NTP — bez tego RTC z "wiarygodnie wyglądającą", ale błędną
+// datą (np. źle ustawioną raz przy bring-upie) nigdy się sam nie poprawia:
+// initializeRTC() woła setRTCFromNTP() tylko przy utracie zasilania baterii
+// albo jawnie nieprawidłowych komponentach daty (rok/miesiąc/dzień poza zakresem).
+void updateRTCSync() {
+    if (useInternalRTC) return;  // fallback ESP32 system time ma inne źródło (getLocalTime)
+    if (!isWiFiConnected()) return;
+    if (lastNTPSync != 0 && millis() - lastNTPSync < NTP_SYNC_INTERVAL) return;
+
+    LOG_INFO("Periodic RTC/NTP resync (co %lu min)...", NTP_SYNC_INTERVAL / 60000UL);
+    setRTCFromNTP();
+}
