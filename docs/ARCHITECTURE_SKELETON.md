@@ -245,7 +245,9 @@ enum LogZone : uint8_t {            // TYLKO do logowania — nie steruje aktuat
 //                  monitorowania empirycznie po uruchomieniu)
 //   low_step_1/2/3  = 1.0 / 2.0 / 3.5°C poniżej target_temp
 //   high_step_1/2/3 = 1.0 / 2.0 / 3.5°C powyżej target_temp (osobna konfiguracja)
-// Walidacja przy zapisie z GUI: step_1 < step_2 < step_3, step_1 > normal_delta.
+// Walidacja przy zapisie z GUI: step_1 < step_2, step_1 > normal_delta.
+// (2026-07-13: step_3 usunięty — stopień 3 to zawsze "powyżej step_2",
+// nieograniczony od góry; step_3 nigdy nie był sprawdzany jako granica.)
 
 enum LogReason : uint8_t {
     REASON_ZONE_CHANGE = 0,         // przejście między strefami (z histerezą)
@@ -253,16 +255,14 @@ enum LogReason : uint8_t {
     REASON_BOOT        = 2,         // znacznik restartu urządzenia
 };
 
-struct LogZoneConfig {              // 28B + 2B checksum, FRAM 0x052E — progi z GUI
+struct LogZoneConfig {              // 20B + 2B checksum, FRAM 0x052E — progi z GUI
     float normal_delta;   // domyślnie 0.5°C
     float low_step_1;     // domyślnie 1.0°C
-    float low_step_2;     // domyślnie 2.0°C
-    float low_step_3;     // domyślnie 3.5°C
+    float low_step_2;     // domyślnie 2.0°C — stopień 3 = powyżej tego, nieograniczony
     float high_step_1;    // domyślnie 1.0°C
-    float high_step_2;    // domyślnie 2.0°C
-    float high_step_3;    // domyślnie 3.5°C
+    float high_step_2;    // domyślnie 2.0°C — stopień 3 = powyżej tego, nieograniczony
 };
-static_assert(sizeof(LogZoneConfig) == 28);
+static_assert(sizeof(LogZoneConfig) == 20);
 
 // Zasady zapisu (ustalone, implementacja w Etapie 4):
 //   - odstęp minimalny między zdarzeniami: 30 min = LOG_MIN_EVENT_INTERVAL_S
@@ -370,12 +370,13 @@ GET  /api/history            — ring buffer 800 rek. event-driven (newest-first
 GET  /api/thermo-config
 POST /api/thermo-config      — wszystkie pola ThermoConfig (form-encoded)
 GET  /api/log-zone-config
-POST /api/log-zone-config    — progi LogZoneConfig: normal_delta, low_step_1-3,
-                               high_step_1-3 (form-encoded); walidacja monotoniczności
-                               po stronie serwera (step_1<step_2<step_3, step_1>normal_delta)
-POST /api/reset-alarm        — manual ack
-POST /api/system-toggle      — enable/disable
-POST /api/system-reset       — reset automatu stanów
+POST /api/log-zone-config    — progi LogZoneConfig: normal_delta, low_step_1-2,
+                               high_step_1-2 (form-encoded); walidacja monotoniczności
+                               po stronie serwera (step_1<step_2, step_1>normal_delta).
+                               Stopień 3 = powyżej step_2, nieograniczony, bez configu.
+POST /api/mute-alarm         — wycisza buzzer dla alarmów aktywnych w tej chwili
+                               (per-epizod — kolejne wystąpienie znów zadźwięczy)
+POST /api/system-toggle      — Auto Mode / Service Mode (enable/disable)
 GET  /api/energy             — total_kwh, today_kwh, pulse_count, power_w_now
 POST /api/energy-reset-day   — reset licznika dobowego
 ```

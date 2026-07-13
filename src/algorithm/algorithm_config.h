@@ -39,11 +39,9 @@
 // ============================================================
 #define DEFAULT_LOG_ZONE_NORMAL_DELTA   0.5f   // połowa szerokości strefy prawidłowej wokół target_temp
 #define DEFAULT_LOG_ZONE_LOW_STEP_1     1.0f   // próg stopnia 1 poniżej target_temp
-#define DEFAULT_LOG_ZONE_LOW_STEP_2     2.0f   // próg stopnia 2 poniżej target_temp
-#define DEFAULT_LOG_ZONE_LOW_STEP_3     3.5f   // próg stopnia 3 poniżej target_temp
+#define DEFAULT_LOG_ZONE_LOW_STEP_2     2.0f   // próg stopnia 2 poniżej target_temp (stopień 3 = powyżej tego progu, nieograniczony)
 #define DEFAULT_LOG_ZONE_HIGH_STEP_1    1.0f   // próg stopnia 1 powyżej target_temp
-#define DEFAULT_LOG_ZONE_HIGH_STEP_2    2.0f   // próg stopnia 2 powyżej target_temp
-#define DEFAULT_LOG_ZONE_HIGH_STEP_3    3.5f   // próg stopnia 3 powyżej target_temp
+#define DEFAULT_LOG_ZONE_HIGH_STEP_2    2.0f   // próg stopnia 2 powyżej target_temp (stopień 3 = powyżej tego progu, nieograniczony)
 
 #define LOG_HEARTBEAT_INTERVAL_S    86400UL    // 24h — wymuszony wpis mimo braku zmiany strefy (NIE z GUI)
 #define LOG_MIN_EVENT_INTERVAL_S    1800UL     // 30 min — bezwładność 240L wody wyklucza szybszą realną zmianę
@@ -142,14 +140,12 @@ static_assert(sizeof(ThermoConfig) == 44, "ThermoConfig must be 44 bytes"); // 1
 struct LogZoneConfig {
     float normal_delta;   // połowa szerokości strefy prawidłowej wokół target_temp
     float low_step_1;     // próg stopnia 1 poniżej target_temp
-    float low_step_2;     // próg stopnia 2 poniżej target_temp
-    float low_step_3;     // próg stopnia 3 poniżej target_temp
+    float low_step_2;     // próg stopnia 2 poniżej target_temp — stopień 3 = powyżej tego, nieograniczony
     float high_step_1;    // próg stopnia 1 powyżej target_temp
-    float high_step_2;    // próg stopnia 2 powyżej target_temp
-    float high_step_3;    // próg stopnia 3 powyżej target_temp
+    float high_step_2;    // próg stopnia 2 powyżej target_temp — stopień 3 = powyżej tego, nieograniczony
 };
-static_assert(sizeof(LogZoneConfig) == 28, "LogZoneConfig must be 28 bytes");
-// Walidacja przy zapisie z GUI: low_step_1 < low_step_2 < low_step_3 (analogicznie high_*),
+static_assert(sizeof(LogZoneConfig) == 20, "LogZoneConfig must be 20 bytes");
+// Walidacja przy zapisie z GUI: low_step_1 < low_step_2 (analogicznie high_*),
 // i low_step_1/high_step_1 > normal_delta — inaczej strefy się nakładają/odwracają.
 
 // ============================================================

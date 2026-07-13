@@ -28,8 +28,13 @@
 // dawne komentarze "40B"/"16B" były błędne od commitu Etap 0.
 #define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (44B)
 #define FRAM_ADDR_THERMO_CFG_CHKSUM 0x052C  // 2B checksum
-#define FRAM_ADDR_LOG_ZONE_CONFIG   0x052E  // LogZoneConfig (28B) — progi LogZone z GUI
-#define FRAM_ADDR_LOG_ZONE_CHKSUM   0x054A  // 2B checksum
+#define FRAM_ADDR_LOG_ZONE_CONFIG   0x052E  // LogZoneConfig (20B) — progi LogZone z GUI
+                                             // (2026-07-13: usunięte martwe low_step_3/
+                                             // high_step_3, było 28B — adresy poniżej
+                                             // przesunięte, stary zapis odrzuci się przez
+                                             // checksum mismatch i wróci do defaultów)
+#define FRAM_ADDR_LOG_ZONE_CHKSUM   0x0542  // 2B checksum
+// 0x0544–0x054B: gap (8B rezerwa, po zmniejszeniu LogZoneConfig)
 #define FRAM_ADDR_ENERGY_STORE      0x054C  // EnergyStore (12B, checksum wbudowany)
 #define FRAM_ADDR_BUF_COUNT         0x0558  // 2B — liczba zapisanych rekordów
 #define FRAM_ADDR_BUF_WPTR          0x055A  // 2B — write pointer (0–799)
