@@ -133,7 +133,10 @@ void loop() {
         checkSystemAutoEnable();
     }
 
-    // 100ms tick — sieć i bezpieczeństwo
+    // 100ms tick — sieć, bezpieczeństwo i granica godziny/doby dla logowania.
+    // checkLogRollover() musi być poza 15s cyklu update() — restart o lokalnej
+    // północy (patrz wyżej) jest sprawdzany co pętlę i mógłby wygrać wyścig
+    // z detekcją granicy doby, gdyby ta była gated na TEMP_MEASURE_MS.
     static unsigned long lastTick = 0;
     if (now - lastTick >= 100) {
         lastTick = now;
@@ -142,6 +145,7 @@ void loop() {
         updateWiFi();
         updateEnergyMeter();
         updateRTCSync();
+        thermoAlgorithm.checkLogRollover();
     }
 
     delay(10);

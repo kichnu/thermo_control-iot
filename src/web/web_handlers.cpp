@@ -19,11 +19,11 @@
 
 void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/status",           HTTP_GET,  requireAuth(handleStatus));
-    server.on("/api/history",          HTTP_GET,  requireAuth(handleHistory));
+    server.on("/api/history-hourly",   HTTP_GET,  requireAuth(handleHourlyHistory));
+    server.on("/api/history-daily",    HTTP_GET,  requireAuth(handleDailyHistory));
+    server.on("/api/alarm-events",     HTTP_GET,  requireAuth(handleAlarmEvents));
     server.on("/api/thermo-config",    HTTP_GET,  requireAuth(handleGetThermoConfig));
     server.on("/api/thermo-config",    HTTP_POST, requireAuth(handleSetThermoConfig));
-    server.on("/api/log-zone-config",  HTTP_GET,  requireAuth(handleGetLogZoneConfig));
-    server.on("/api/log-zone-config",  HTTP_POST, requireAuth(handleSetLogZoneConfig));
     server.on("/api/mute-alarm",       HTTP_POST, requireAuth(handleMuteAlarm));
     server.on("/api/system-toggle",    HTTP_POST, requireAuth(handleSystemToggle));
     server.on("/api/energy",           HTTP_GET,  requireAuth(handleEnergy));
@@ -46,24 +46,55 @@ void handleStatus(AsyncWebServerRequest* request) {
     request->send(200, "application/json", out);
 }
 
-void handleHistory(AsyncWebServerRequest* request) {
-    // Limit odpowiedzi HTTP — bufor ma miejsce na 800 rekordów, ale nie serwujemy
-    // wszystkich naraz. newest-first (patrz loadTempHistory()).
-    const uint16_t MAX_RETURNED = 100;
-    TempRecord buf[MAX_RETURNED];
-    uint16_t n = loadTempHistory(buf, MAX_RETURNED);
+// Bufory godzinowy/dobowy — patrz TempAvgRecord (algorithm_config.h). Obie
+// pojemności (24 / 366) są już z natury małe, więc serwujemy komplet naraz.
+
+void handleHourlyHistory(AsyncWebServerRequest* request) {
+    TempAvgRecord buf[HOURLY_BUFFER_CAPACITY];
+    uint16_t n = loadHourlyHistory(buf, HOURLY_BUFFER_CAPACITY);  // newest-first
 
     JsonDocument doc;
     JsonArray arr = doc["records"].to<JsonArray>();
     for (uint16_t i = 0; i < n; i++) {
         JsonObject r = arr.add<JsonObject>();
-        r["ts"]        = buf[i].timestamp;
-        r["temp_c"]    = buf[i].temp_x10 / 10.0f;
-        r["zone"]      = (uint8_t)TREC_ZONE_GET(buf[i].zone_reason);
-        r["reason"]    = (uint8_t)TREC_REASON_GET(buf[i].zone_reason);
-        r["unstable"]  = (bool)TREC_UNSTABLE_GET(buf[i].zone_reason);
-        r["heater_on"] = (bool)TREC_HEATER_ON_GET(buf[i].actuator_snapshot);
-        r["fan_pct"]   = TREC_FAN_PCT_GET(buf[i].actuator_snapshot);
+        r["ts"]     = buf[i].timestamp;
+        r["temp_c"] = buf[i].temp_x10 / 10.0f;
+    }
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
+void handleDailyHistory(AsyncWebServerRequest* request) {
+    TempAvgRecord buf[DAILY_BUFFER_CAPACITY];
+    uint16_t n = loadDailyHistory(buf, DAILY_BUFFER_CAPACITY);  // newest-first
+
+    JsonDocument doc;
+    JsonArray arr = doc["records"].to<JsonArray>();
+    for (uint16_t i = 0; i < n; i++) {
+        JsonObject r = arr.add<JsonObject>();
+        r["ts"]     = buf[i].timestamp;
+        r["temp_c"] = buf[i].temp_x10 / 10.0f;
+    }
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
+void handleAlarmEvents(AsyncWebServerRequest* request) {
+    // Limit odpowiedzi HTTP — bufor ma miejsce na ALARM_BUFFER_CAPACITY (300)
+    // epizodów, ale nie serwujemy wszystkich naraz.
+    const uint16_t MAX_RETURNED = 100;
+    AlarmEvent buf[MAX_RETURNED];
+    uint16_t n = loadAlarmEvents(buf, MAX_RETURNED);  // newest-first
+
+    JsonDocument doc;
+    JsonArray arr = doc["events"].to<JsonArray>();
+    for (uint16_t i = 0; i < n; i++) {
+        JsonObject r = arr.add<JsonObject>();
+        r["ts"]     = buf[i].timestamp;
+        r["temp_c"] = buf[i].temp_x10 / 10.0f;
+        r["type"]   = buf[i].type;
     }
     String out;
     serializeJson(doc, out);
@@ -77,7 +108,7 @@ void handleGetThermoConfig(AsyncWebServerRequest* request) {
     doc["heat_hyst"]         = cfg.heat_hyst;
     doc["cool_start"]        = cfg.cool_start;
     doc["cool_full"]         = cfg.cool_full;
-    doc["hysteresis_band"]   = cfg.hysteresis_band;
+    doc["fan_min_pct"]       = cfg.fan_min_pct;
     doc["alarm_delta_low"]   = cfg.alarm_delta_low;
     doc["alarm_delta_high"]  = cfg.alarm_delta_high;
     doc["trend_alarm_delta"] = cfg.trend_alarm_delta;
@@ -102,7 +133,6 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     applyFloatParam(request, "heat_hyst",         cfg.heat_hyst);
     applyFloatParam(request, "cool_start",        cfg.cool_start);
     applyFloatParam(request, "cool_full",         cfg.cool_full);
-    applyFloatParam(request, "hysteresis_band",   cfg.hysteresis_band);
     applyFloatParam(request, "alarm_delta_low",   cfg.alarm_delta_low);
     applyFloatParam(request, "alarm_delta_high",  cfg.alarm_delta_high);
     applyFloatParam(request, "trend_alarm_delta", cfg.trend_alarm_delta);
@@ -110,6 +140,12 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     applyFloatParam(request, "heater_watt",       cfg.heater_watt);
     if (request->hasParam("pulses_per_kwh", true)) {
         cfg.pulses_per_kwh = (uint16_t)request->getParam("pulses_per_kwh", true)->value().toInt();
+    }
+    if (request->hasParam("fan_min_pct", true)) {
+        int v = request->getParam("fan_min_pct", true)->value().toInt();
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        cfg.fan_min_pct = (uint8_t)v;
     }
 
     // Walidacja: progi muszą zachowywać sensowną kolejność fizyczną
@@ -121,6 +157,13 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"alarm thresholds must exceed control thresholds\"}");
         return;
     }
+    // heat_hyst/cool_start to teraz jedyny parametr histerezy na kanał (ON-offset,
+    // OFF zawsze przy target_temp) — poniżej MIN_HYSTERESIS_OFFSET próg ON/OFF
+    // tonie w szumie STS35 (±0.1°C) i grozi chatteringiem.
+    if (cfg.heat_hyst < MIN_HYSTERESIS_OFFSET || cfg.cool_start < MIN_HYSTERESIS_OFFSET) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"heat_hyst/cool_start must be >= 0.1\"}");
+        return;
+    }
 
     if (!thermoAlgorithm.setConfig(cfg)) {
         request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
@@ -128,45 +171,6 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     }
 
     if (cfg.pulses_per_kwh > 0) setEnergyPulsesPerKwh(cfg.pulses_per_kwh);
-
-    request->send(200, "application/json", "{\"ok\":true}");
-}
-
-void handleGetLogZoneConfig(AsyncWebServerRequest* request) {
-    const LogZoneConfig& cfg = thermoAlgorithm.getLogZoneConfig();
-    JsonDocument doc;
-    doc["normal_delta"] = cfg.normal_delta;
-    doc["low_step_1"]   = cfg.low_step_1;
-    doc["low_step_2"]   = cfg.low_step_2;
-    doc["high_step_1"]  = cfg.high_step_1;
-    doc["high_step_2"]  = cfg.high_step_2;
-    String out;
-    serializeJson(doc, out);
-    request->send(200, "application/json", out);
-}
-
-void handleSetLogZoneConfig(AsyncWebServerRequest* request) {
-    LogZoneConfig cfg = thermoAlgorithm.getLogZoneConfig();
-
-    applyFloatParam(request, "normal_delta", cfg.normal_delta);
-    applyFloatParam(request, "low_step_1",   cfg.low_step_1);
-    applyFloatParam(request, "low_step_2",   cfg.low_step_2);
-    applyFloatParam(request, "high_step_1",  cfg.high_step_1);
-    applyFloatParam(request, "high_step_2",  cfg.high_step_2);
-
-    // Walidacja monotoniczności (patrz algorithm_config.h / ARCHITECTURE_SKELETON.md)
-    if (cfg.low_step_1 >= cfg.low_step_2 ||
-        cfg.high_step_1 >= cfg.high_step_2 ||
-        cfg.low_step_1 <= cfg.normal_delta || cfg.high_step_1 <= cfg.normal_delta) {
-        request->send(400, "application/json",
-            "{\"ok\":false,\"error\":\"steps must be monotonic and > normal_delta\"}");
-        return;
-    }
-
-    if (!thermoAlgorithm.setLogZoneConfig(cfg)) {
-        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
-        return;
-    }
 
     request->send(200, "application/json", "{\"ok\":true}");
 }

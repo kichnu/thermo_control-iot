@@ -33,15 +33,6 @@ bool saveThermoConfigToFRAM(const ThermoConfig& cfg);
 bool loadThermoConfigFromFRAM(ThermoConfig& cfg);
 
 // ===============================
-// LOG ZONE CONFIG SECTION (progi logowania zdarzeniowego, konfigurowalne z GUI)
-// ===============================
-
-struct LogZoneConfig;
-
-bool saveLogZoneConfigToFRAM(const LogZoneConfig& cfg);
-bool loadLogZoneConfigFromFRAM(LogZoneConfig& cfg);
-
-// ===============================
 // ENERGY STORE SECTION (licznik impulsów miernika energii, checksum wbudowany w struct)
 // ===============================
 
@@ -51,13 +42,23 @@ bool saveEnergyStoreToFRAM(const EnergyStore& store);
 bool loadEnergyStoreFromFRAM(EnergyStore& store);
 
 // ===============================
-// RING BUFFER SECTION (TempRecord, event-driven — patrz fram_constants.h)
+// RING BUFFERS — godzinowy/dobowy (TempAvgRecord) i zdarzeń alarmowych
+// (AlarmEvent), patrz fram_constants.h i algorithm_config.h
 // ===============================
 
-struct TempRecord;
+struct TempAvgRecord;
+struct AlarmEvent;
 
-bool     saveTempRecord(const TempRecord& rec);
-uint16_t loadTempHistory(TempRecord* buf, uint16_t maxCount);  // newest-first
-uint16_t getTempRecordCount();
+bool     saveHourlyRecord(const TempAvgRecord& rec);
+uint16_t loadHourlyHistory(TempAvgRecord* buf, uint16_t maxCount);  // newest-first
+uint16_t getHourlyRecordCount();
+
+bool     saveDailyRecord(const TempAvgRecord& rec);
+uint16_t loadDailyHistory(TempAvgRecord* buf, uint16_t maxCount);   // newest-first
+uint16_t getDailyRecordCount();
+
+bool     saveAlarmEvent(const AlarmEvent& ev);
+uint16_t loadAlarmEvents(AlarmEvent* buf, uint16_t maxCount);       // newest-first
+uint16_t getAlarmEventCount();
 
 #endif

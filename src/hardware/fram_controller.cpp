@@ -220,42 +220,6 @@ bool loadThermoConfigFromFRAM(ThermoConfig& cfg) {
 }
 
 // ===============================
-// LOG ZONE CONFIG SECTION
-// ===============================
-
-bool saveLogZoneConfigToFRAM(const LogZoneConfig& cfg) {
-    if (!framInitialized) return false;
-
-    framWrite(FRAM_ADDR_LOG_ZONE_CONFIG, &cfg, sizeof(LogZoneConfig));
-
-    uint16_t chksum = calculateChecksum((const uint8_t*)&cfg, sizeof(LogZoneConfig));
-    framWrite(FRAM_ADDR_LOG_ZONE_CHKSUM, &chksum, 2);
-
-    LOG_INFO("LogZoneConfig saved: normal=%.1f low=%.1f/%.1f high=%.1f/%.1f",
-             cfg.normal_delta, cfg.low_step_1, cfg.low_step_2,
-             cfg.high_step_1, cfg.high_step_2);
-    return true;
-}
-
-bool loadLogZoneConfigFromFRAM(LogZoneConfig& cfg) {
-    if (!framInitialized) return false;
-
-    LogZoneConfig tmp;
-    fram.read(FRAM_ADDR_LOG_ZONE_CONFIG, (uint8_t*)&tmp, sizeof(LogZoneConfig));
-
-    uint16_t stored = 0;
-    fram.read(FRAM_ADDR_LOG_ZONE_CHKSUM, (uint8_t*)&stored, 2);
-
-    if (calculateChecksum((const uint8_t*)&tmp, sizeof(LogZoneConfig)) != stored) {
-        LOG_WARNING("LogZoneConfig checksum mismatch — using defaults");
-        return false;
-    }
-
-    cfg = tmp;
-    return true;
-}
-
-// ===============================
 // ENERGY STORE SECTION (checksum wbudowany w struct, jak FRAMCredentials)
 // ===============================
 
@@ -291,23 +255,27 @@ bool loadEnergyStoreFromFRAM(EnergyStore& store) {
 }
 
 // ================================================================
-// RING BUFFER — TempRecord, event-driven (800 × 8B)
+// RING BUFFERS — generyczna implementacja (count/wptr/checksum + dane),
+// parametryzowana adresami/pojemnością/rozmiarem rekordu. Używana przez
+// trzy konkretne bufory poniżej: godzinowy, dobowy, zdarzeń alarmowych.
 // ================================================================
 
-static_assert(sizeof(TempRecord) == RING_RECORD_SIZE,
-    "TempRecord size mismatch! Update RING_RECORD_SIZE in fram_constants.h");
+static_assert(sizeof(TempAvgRecord) == HOURLY_RECORD_SIZE, "TempAvgRecord/HOURLY_RECORD_SIZE mismatch");
+static_assert(sizeof(TempAvgRecord) == DAILY_RECORD_SIZE,  "TempAvgRecord/DAILY_RECORD_SIZE mismatch");
+static_assert(sizeof(AlarmEvent)    == ALARM_RECORD_SIZE,  "AlarmEvent/ALARM_RECORD_SIZE mismatch");
 
 // Metadane (count/wptr) chronione osobną checksumą — świeża/pusta FRAM ma
 // losowe bajty, bez tego pierwszy odczyt potrafiłby zwrócić śmieciowy count.
-static bool readRingMeta(uint16_t& count, uint16_t& wptr) {
-    fram.read(FRAM_ADDR_BUF_COUNT, (uint8_t*)&count, 2);
-    fram.read(FRAM_ADDR_BUF_WPTR,  (uint8_t*)&wptr,  2);
+static bool readRingMeta(uint16_t countAddr, uint16_t wptrAddr, uint16_t chksumAddr,
+                          uint16_t& count, uint16_t& wptr) {
+    fram.read(countAddr, (uint8_t*)&count, 2);
+    fram.read(wptrAddr,  (uint8_t*)&wptr,  2);
 
     uint8_t metabuf[4];
     memcpy(metabuf,     &wptr,  2);
     memcpy(metabuf + 2, &count, 2);
     uint16_t stored = 0;
-    fram.read(FRAM_ADDR_BUF_META_CHKSUM, (uint8_t*)&stored, 2);
+    fram.read(chksumAddr, (uint8_t*)&stored, 2);
 
     if (calculateChecksum(metabuf, 4) != stored) {
         count = 0;
@@ -317,55 +285,112 @@ static bool readRingMeta(uint16_t& count, uint16_t& wptr) {
     return true;
 }
 
-static void writeRingMeta(uint16_t count, uint16_t wptr) {
-    framWrite(FRAM_ADDR_BUF_WPTR,  &wptr,  2);
-    framWrite(FRAM_ADDR_BUF_COUNT, &count, 2);
+static void writeRingMeta(uint16_t countAddr, uint16_t wptrAddr, uint16_t chksumAddr,
+                           uint16_t count, uint16_t wptr) {
+    framWrite(wptrAddr,  &wptr,  2);
+    framWrite(countAddr, &count, 2);
 
     uint8_t metabuf[4];
     memcpy(metabuf,     &wptr,  2);
     memcpy(metabuf + 2, &count, 2);
     uint16_t chksum = calculateChecksum(metabuf, 4);
-    framWrite(FRAM_ADDR_BUF_META_CHKSUM, &chksum, 2);
+    framWrite(chksumAddr, &chksum, 2);
 }
 
-bool saveTempRecord(const TempRecord& rec) {
+static bool saveRingRecord(uint16_t dataAddr, uint16_t capacity, uint16_t recSize,
+                            uint16_t countAddr, uint16_t wptrAddr, uint16_t chksumAddr,
+                            const void* rec) {
     if (!framInitialized) return false;
 
     uint16_t count = 0, wptr = 0;
-    readRingMeta(count, wptr);  // checksum invalid → count/wptr=0, traktujemy jako pusty bufor
-    if (wptr >= RING_BUFFER_CAPACITY) wptr = 0;
+    readRingMeta(countAddr, wptrAddr, chksumAddr, count, wptr);  // checksum invalid → traktuj jako pusty bufor
+    if (wptr >= capacity) wptr = 0;
 
-    uint16_t addr = FRAM_ADDR_RING_BUFFER + wptr * RING_RECORD_SIZE;
-    framWrite(addr, &rec, RING_RECORD_SIZE);
+    uint16_t addr = dataAddr + wptr * recSize;
+    framWrite(addr, rec, recSize);
 
-    wptr = (wptr + 1) % RING_BUFFER_CAPACITY;
-    if (count < RING_BUFFER_CAPACITY) count++;
+    wptr = (wptr + 1) % capacity;
+    if (count < capacity) count++;
 
-    writeRingMeta(count, wptr);
+    writeRingMeta(countAddr, wptrAddr, chksumAddr, count, wptr);
     return true;
 }
 
-uint16_t loadTempHistory(TempRecord* buf, uint16_t maxCount) {
+// buf musi być tablicą elemSize-bajtowych rekordów; wypełnia newest-first.
+static uint16_t loadRingRecords(uint16_t dataAddr, uint16_t capacity, uint16_t recSize,
+                                 uint16_t countAddr, uint16_t wptrAddr, uint16_t chksumAddr,
+                                 void* buf, uint16_t maxCount, size_t elemSize) {
     if (!framInitialized || !buf) return 0;
 
     uint16_t count = 0, wptr = 0;
-    readRingMeta(count, wptr);
-    if (count > RING_BUFFER_CAPACITY) count = RING_BUFFER_CAPACITY;
+    readRingMeta(countAddr, wptrAddr, chksumAddr, count, wptr);
+    if (count > capacity) count = capacity;
     if (count > maxCount) count = maxCount;
     if (count == 0) return 0;
 
-    // Newest-first: najnowszy rekord jest w slocie tuż przed wptr.
+    uint8_t* out = (uint8_t*)buf;
     for (uint16_t i = 0; i < count; i++) {
-        uint16_t slot = (wptr + RING_BUFFER_CAPACITY - 1 - i) % RING_BUFFER_CAPACITY;
-        uint16_t addr = FRAM_ADDR_RING_BUFFER + slot * RING_RECORD_SIZE;
-        fram.read(addr, (uint8_t*)&buf[i], RING_RECORD_SIZE);
+        uint16_t slot = (wptr + capacity - 1 - i) % capacity;
+        uint16_t addr = dataAddr + slot * recSize;
+        fram.read(addr, out + (size_t)i * elemSize, recSize);
     }
     return count;
 }
 
-uint16_t getTempRecordCount() {
+static uint16_t getRingCount(uint16_t capacity, uint16_t countAddr, uint16_t wptrAddr, uint16_t chksumAddr) {
     if (!framInitialized) return 0;
     uint16_t count = 0, wptr = 0;
-    readRingMeta(count, wptr);
-    return (count > RING_BUFFER_CAPACITY) ? RING_BUFFER_CAPACITY : count;
+    readRingMeta(countAddr, wptrAddr, chksumAddr, count, wptr);
+    return (count > capacity) ? capacity : count;
+}
+
+// ---- Bufor godzinowy (rolling 24h, TempAvgRecord) ----
+
+bool saveHourlyRecord(const TempAvgRecord& rec) {
+    return saveRingRecord(FRAM_ADDR_HOURLY_BUFFER, HOURLY_BUFFER_CAPACITY, HOURLY_RECORD_SIZE,
+                           FRAM_ADDR_HOURLY_COUNT, FRAM_ADDR_HOURLY_WPTR, FRAM_ADDR_HOURLY_META_CHKSUM, &rec);
+}
+
+uint16_t loadHourlyHistory(TempAvgRecord* buf, uint16_t maxCount) {
+    return loadRingRecords(FRAM_ADDR_HOURLY_BUFFER, HOURLY_BUFFER_CAPACITY, HOURLY_RECORD_SIZE,
+                            FRAM_ADDR_HOURLY_COUNT, FRAM_ADDR_HOURLY_WPTR, FRAM_ADDR_HOURLY_META_CHKSUM,
+                            buf, maxCount, sizeof(TempAvgRecord));
+}
+
+uint16_t getHourlyRecordCount() {
+    return getRingCount(HOURLY_BUFFER_CAPACITY, FRAM_ADDR_HOURLY_COUNT, FRAM_ADDR_HOURLY_WPTR, FRAM_ADDR_HOURLY_META_CHKSUM);
+}
+
+// ---- Bufor dobowy (~rok, TempAvgRecord) ----
+
+bool saveDailyRecord(const TempAvgRecord& rec) {
+    return saveRingRecord(FRAM_ADDR_DAILY_BUFFER, DAILY_BUFFER_CAPACITY, DAILY_RECORD_SIZE,
+                           FRAM_ADDR_DAILY_COUNT, FRAM_ADDR_DAILY_WPTR, FRAM_ADDR_DAILY_META_CHKSUM, &rec);
+}
+
+uint16_t loadDailyHistory(TempAvgRecord* buf, uint16_t maxCount) {
+    return loadRingRecords(FRAM_ADDR_DAILY_BUFFER, DAILY_BUFFER_CAPACITY, DAILY_RECORD_SIZE,
+                            FRAM_ADDR_DAILY_COUNT, FRAM_ADDR_DAILY_WPTR, FRAM_ADDR_DAILY_META_CHKSUM,
+                            buf, maxCount, sizeof(TempAvgRecord));
+}
+
+uint16_t getDailyRecordCount() {
+    return getRingCount(DAILY_BUFFER_CAPACITY, FRAM_ADDR_DAILY_COUNT, FRAM_ADDR_DAILY_WPTR, FRAM_ADDR_DAILY_META_CHKSUM);
+}
+
+// ---- Bufor zdarzeń alarmowych (AlarmEvent) ----
+
+bool saveAlarmEvent(const AlarmEvent& ev) {
+    return saveRingRecord(FRAM_ADDR_ALARM_BUFFER, ALARM_BUFFER_CAPACITY, ALARM_RECORD_SIZE,
+                           FRAM_ADDR_ALARM_COUNT, FRAM_ADDR_ALARM_WPTR, FRAM_ADDR_ALARM_META_CHKSUM, &ev);
+}
+
+uint16_t loadAlarmEvents(AlarmEvent* buf, uint16_t maxCount) {
+    return loadRingRecords(FRAM_ADDR_ALARM_BUFFER, ALARM_BUFFER_CAPACITY, ALARM_RECORD_SIZE,
+                            FRAM_ADDR_ALARM_COUNT, FRAM_ADDR_ALARM_WPTR, FRAM_ADDR_ALARM_META_CHKSUM,
+                            buf, maxCount, sizeof(AlarmEvent));
+}
+
+uint16_t getAlarmEventCount() {
+    return getRingCount(ALARM_BUFFER_CAPACITY, FRAM_ADDR_ALARM_COUNT, FRAM_ADDR_ALARM_WPTR, FRAM_ADDR_ALARM_META_CHKSUM);
 }

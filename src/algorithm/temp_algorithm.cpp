@@ -11,50 +11,8 @@
 
 TempAlgorithm thermoAlgorithm;
 
-// LogZone jest TYLKO do logowania (nie steruje aktuatorami — to robi AlgorithmState,
-// patrz algorithm_config.h). W paśmie normal_delta rozróżnia IDLE/HEATING/COOLING wg
-// aktualnego AlgorithmState; poza pasmem klasyfikuje czysto wg odchylenia od target_temp,
-// niezależnie od AlgorithmState — to daje wcześniejszą granulację niż "twardy" ALARM_LOW/HIGH
-// (który uruchamia się dopiero przy alarm_delta_low/high).
-static LogZone computeLogZone(AlgorithmState state, float temp, float target, const LogZoneConfig& lzc) {
-    if (state == STATE_SENSOR_FAULT) return ZONE_SENSOR_FAULT;
-    if (state == STATE_TREND_ALARM)  return ZONE_TREND_ALARM;
-
-    float dev = temp - target;  // dodatnie = powyżej target
-    if (dev < 0) {
-        float d = -dev;
-        if (d <= lzc.normal_delta) return (state == STATE_HEATING) ? ZONE_HEATING : ZONE_IDLE;
-        if (d <= lzc.low_step_1)   return ZONE_ALARM_LOW_1;
-        if (d <= lzc.low_step_2)   return ZONE_ALARM_LOW_2;
-        return ZONE_ALARM_LOW_3;
-    } else {
-        if (dev <= lzc.normal_delta) return (state == STATE_COOLING) ? ZONE_COOLING : ZONE_IDLE;
-        if (dev <= lzc.high_step_1)  return ZONE_ALARM_HIGH_1;
-        if (dev <= lzc.high_step_2)  return ZONE_ALARM_HIGH_2;
-        return ZONE_ALARM_HIGH_3;
-    }
-}
-
-// Sygnał diagnostyczny "UNSTABLE": ta sama strefa wchodzona ≥LOG_FLAPPING_COUNT razy
-// w oknie LOG_FLAPPING_WINDOW_S — patrz pamięć projektu fram_event_logging pkt 4.
-static bool checkFlapping(LogZone newZone, uint32_t now) {
-    TempRecord recent[LOG_FLAPPING_COUNT + 8];
-    uint16_t n = loadTempHistory(recent, LOG_FLAPPING_COUNT + 8);
-
-    uint8_t matches = 1;  // ten nowy zapis liczy się jako pierwsze wystąpienie
-    for (uint16_t i = 0; i < n; i++) {
-        if (now - recent[i].timestamp > LOG_FLAPPING_WINDOW_S) break;  // newest-first — dalej tylko starsze
-        if (TREC_ZONE_GET(recent[i].zone_reason) == newZone &&
-            TREC_REASON_GET(recent[i].zone_reason) == REASON_ZONE_CHANGE) {
-            matches++;
-        }
-    }
-    return matches >= LOG_FLAPPING_COUNT;
-}
-
 void TempAlgorithm::begin() {
     loadConfig();        // stosuje defaults wewnętrznie, jeśli FRAM pusty/niepoprawny
-    loadLogZoneConfig();
     LOG_INFO("TempAlgorithm: init, target=%.1f heat_hyst=%.1f",
              _config.target_temp, _config.heat_hyst);
 }
@@ -66,28 +24,25 @@ void TempAlgorithm::update() {
 
     if (!isTempValid()) {
         bool sensorFault = getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD;
-        _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault);
+        _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault, getTemperature());
         if (sensorFault) {
             _state = STATE_SENSOR_FAULT;
             heaterEmergencyOff();
             fanEmergencyOff();
             if (!(_muted_flags & ALARM_FLAG_SENSOR)) setBuzzerMode(BUZZER_ALARM);
-            _updateLogging(getTemperature());  // loguje z ostatnią znaną temperaturą
         }
-        return;
+        return;  // brak ważnego odczytu — nic do zaakumulowania w buforze godzinowym
     }
-    _setAlarmFlag(ALARM_FLAG_SENSOR, false);  // czujnik znów sprawny — czyści flagę i mute
+    _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // czujnik znów sprawny — czyści flagę i mute
 
     float temp = getTemperature();
+    _accumulateHourlySample(temp);
     _updateAlarms(temp);
     if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH) {
-        // _updateAlarms() już ustawił grzałkę/fan (alarm ma priorytet nad normalną regulacją)
-        _updateLogging(temp);
-        return;
+        return;  // _updateAlarms() już ustawił grzałkę/fan (alarm ma priorytet nad normalną regulacją)
     }
     _updateHeater(temp);
     _updateFan(temp);
-    _updateLogging(temp);
 }
 
 void TempAlgorithm::_applyDefaults() {
@@ -95,7 +50,6 @@ void TempAlgorithm::_applyDefaults() {
     _config.heat_hyst        = DEFAULT_HEAT_HYST;
     _config.cool_start       = DEFAULT_COOL_START;
     _config.cool_full        = DEFAULT_COOL_FULL;
-    _config.hysteresis_band  = DEFAULT_HYSTERESIS_BAND;
     _config.alarm_delta_low  = DEFAULT_ALARM_DELTA_LOW;
     _config.alarm_delta_high = DEFAULT_ALARM_DELTA_HIGH;
     _config.trend_alarm_delta= DEFAULT_TREND_ALARM_DELTA;
@@ -103,43 +57,72 @@ void TempAlgorithm::_applyDefaults() {
     _config.heater_watt      = DEFAULT_HEATER_WATT;
     _config.pulses_per_kwh   = DEFAULT_PULSES_PER_KWH;
     _config.is_configured    = 0;
+    _config.fan_min_pct      = DEFAULT_FAN_MIN_PCT;
 }
 
-void TempAlgorithm::_applyLogZoneDefaults() {
-    _logZoneConfig.normal_delta = DEFAULT_LOG_ZONE_NORMAL_DELTA;
-    _logZoneConfig.low_step_1   = DEFAULT_LOG_ZONE_LOW_STEP_1;
-    _logZoneConfig.low_step_2   = DEFAULT_LOG_ZONE_LOW_STEP_2;
-    _logZoneConfig.high_step_1  = DEFAULT_LOG_ZONE_HIGH_STEP_1;
-    _logZoneConfig.high_step_2  = DEFAULT_LOG_ZONE_HIGH_STEP_2;
-}
-
+// Histereza symetryczna wokół target_temp, jeden parametr na kanał (patrz pamięć
+// projektu): ON przy target - heat_hyst, OFF dokładnie przy target_temp (>=).
 void TempAlgorithm::_updateHeater(float temp) {
-    float on_thresh  = _config.target_temp - _config.heat_hyst;
-    float off_thresh = on_thresh + _config.hysteresis_band;
+    float on_thresh = _config.target_temp - _config.heat_hyst;
     if (temp < on_thresh) {
         setHeaterOn();
         _state = STATE_HEATING;
-    } else if (temp > off_thresh && _state == STATE_HEATING) {
+    } else if (temp >= _config.target_temp && _state == STATE_HEATING) {
         setHeaterOff();
         _state = STATE_IDLE;
     }
 }
 
+// Analogicznie do grzałki, zwierciadlane: ON przy target + cool_start, OFF przy
+// target_temp (<=). W przeciwieństwie do grzałki fan nie jest on/off — potrzebuje
+// własnego latcha (_fanActive), bo prędkość między progami zależy od tego, czy fan
+// już pracuje (inaczej calcFanSpeed() nie wiedziałby, czy poniżej cool_start_abs
+// ma zwrócić 0, czy trzymać floor fan_min_pct).
 void TempAlgorithm::_updateFan(float temp) {
     float cool_start_abs = _config.target_temp + _config.cool_start;
     float cool_full_abs  = _config.target_temp + _config.cool_full;
-    uint8_t spd = calcFanSpeed(temp, cool_start_abs, cool_full_abs);
+
+    if (!_fanActive && temp > cool_start_abs) {
+        _fanActive = true;
+    } else if (_fanActive && temp <= _config.target_temp) {
+        _fanActive = false;
+    }
+
+    uint8_t spd = _fanActive ? calcFanSpeed(temp, cool_start_abs, cool_full_abs, _config.fan_min_pct) : 0;
     setFanSpeed(spd);
-    if (spd > 0 && _state != STATE_HEATING) _state = STATE_COOLING;
-    else if (spd == 0 && _state == STATE_COOLING) _state = STATE_IDLE;
+
+    if (_fanActive && _state != STATE_HEATING) _state = STATE_COOLING;
+    else if (!_fanActive && _state == STATE_COOLING) _state = STATE_IDLE;
 }
 
-void TempAlgorithm::_setAlarmFlag(uint8_t flag, bool active) {
-    if (active) {
+// AlarmEventType odpowiadający fladze i kierunkowi zbocza — patrz algorithm_config.h.
+static AlarmEventType alarmEventTypeFor(uint8_t flag, bool starting) {
+    switch (flag) {
+        case ALARM_FLAG_TEMP_LOW:  return starting ? ALARM_EVT_LOW_START    : ALARM_EVT_LOW_END;
+        case ALARM_FLAG_TEMP_HIGH: return starting ? ALARM_EVT_HIGH_START   : ALARM_EVT_HIGH_END;
+        case ALARM_FLAG_TREND:     return starting ? ALARM_EVT_TREND_START  : ALARM_EVT_TREND_END;
+        default:                   return starting ? ALARM_EVT_SENSOR_START : ALARM_EVT_SENSOR_END;
+    }
+}
+
+void TempAlgorithm::_logAlarmEvent(uint8_t flag, bool starting, float temp) {
+    AlarmEvent ev;
+    ev.timestamp = (uint32_t)getUnixTimestamp();
+    ev.temp_x10  = (int16_t)roundf(temp * 10.0f);
+    ev.type      = alarmEventTypeFor(flag, starting);
+    ev._pad      = 0;
+    saveAlarmEvent(ev);
+}
+
+void TempAlgorithm::_setAlarmFlag(uint8_t flag, bool active, float temp) {
+    bool wasActive = (_alarm_flags & flag) != 0;
+    if (active && !wasActive) {
         _alarm_flags |= flag;
-    } else if (_alarm_flags & flag) {
+        _logAlarmEvent(flag, true, temp);
+    } else if (!active && wasActive) {
         _alarm_flags &= ~flag;
         _muted_flags &= ~flag;  // warunek ustąpił — kolejne wystąpienie znów zadźwięczy
+        _logAlarmEvent(flag, false, temp);
     }
 }
 
@@ -150,8 +133,8 @@ void TempAlgorithm::_updateAlarms(float temp) {
     bool low_now  = (temp < alarm_low_thresh);
     bool high_now = (!low_now && temp > alarm_high_thresh);
 
-    _setAlarmFlag(ALARM_FLAG_TEMP_LOW,  low_now);
-    _setAlarmFlag(ALARM_FLAG_TEMP_HIGH, high_now);
+    _setAlarmFlag(ALARM_FLAG_TEMP_LOW,  low_now, temp);
+    _setAlarmFlag(ALARM_FLAG_TEMP_HIGH, high_now, temp);
 
     if (low_now) {
         _state = STATE_ALARM_LOW;
@@ -183,7 +166,7 @@ void TempAlgorithm::_updateAlarms(float temp) {
 
     // Trend: SSR ON i szybki spadek temp w oknie 5 min (patrz ARCHITECTURE_SKELETON.md)
     bool trend_now = isHeaterOn() && isTrendAlarm(_config.trend_alarm_delta);
-    _setAlarmFlag(ALARM_FLAG_TREND, trend_now);
+    _setAlarmFlag(ALARM_FLAG_TREND, trend_now, temp);
     if (trend_now) {
         _state = STATE_TREND_ALARM;
         if (!(_muted_flags & ALARM_FLAG_TREND)) setBuzzerMode(BUZZER_WARNING);
@@ -196,49 +179,70 @@ void TempAlgorithm::_updateAlarms(float temp) {
     }
 }
 
-void TempAlgorithm::_updateLogging(float temp) {
-    uint32_t now = (uint32_t)getUnixTimestamp();
-    LogZone zone = computeLogZone(_state, temp, _config.target_temp, _logZoneConfig);
+void TempAlgorithm::_accumulateHourlySample(float temp) {
+    _hourAccumSum   += temp;
+    _hourAccumCount += 1;
+}
 
-    auto writeRecord = [&](LogReason reason) {
-        TempRecord rec;
-        rec.timestamp = now;
-        rec.temp_x10  = (int16_t)(temp * 10.0f);
+// Zapisuje uśrednioną próbkę bieżącej godziny do FRAM — wołane przy wykryciu
+// przejścia granicy godziny, NIEZALEŻNIE od tego czy godzina była pełna
+// (restart o lokalnej północy — patrz main.cpp — gwarantuje ≥1 niepełną
+// godzinę dziennie; pomijanie takich godzin oznaczałoby, że bufor dobowy
+// nigdy nie osiągnąłby kompletu 24 wpisów). Jedyny guard: zero próbek
+// (np. czujnik w fault przez całą godzinę) — wtedy nic nie zapisujemy.
+void TempAlgorithm::_flushHourlyAccumulator(uint32_t hourStartTs) {
+    if (_hourAccumCount > 0) {
+        TempAvgRecord rec;
+        rec.timestamp = hourStartTs;
+        rec.temp_x10  = (int16_t)roundf((_hourAccumSum / _hourAccumCount) * 10.0f);
+        saveHourlyRecord(rec);
+    }
+    _hourAccumSum   = 0.0f;
+    _hourAccumCount = 0;
+}
 
-        uint8_t zr = 0;
-        zr = TREC_ZONE_SET(zr, zone);
-        zr = TREC_REASON_SET(zr, reason);
-        if (reason == REASON_ZONE_CHANGE && checkFlapping(zone, now)) {
-            zr = TREC_UNSTABLE_SET(zr);
-        }
-        rec.zone_reason = zr;
+// Średnia z 24 rekordów godzinowych = doba, która właśnie się zakończyła
+// (bufor godzinowy to zawsze "ostatnie 24h" — patrz HOURLY_BUFFER_CAPACITY=24).
+// Jeśli ring jeszcze nie ma 24 wpisów (pierwsza doba po uruchomieniu), pomijamy
+// zapis zamiast liczyć średnią z niepełnego zestawu.
+void TempAlgorithm::_rollupDailyAverage() {
+    TempAvgRecord hourly[HOURLY_BUFFER_CAPACITY];
+    uint16_t n = loadHourlyHistory(hourly, HOURLY_BUFFER_CAPACITY);  // newest-first
+    if (n < HOURLY_BUFFER_CAPACITY) return;
 
-        uint8_t as = 0;
-        as = TREC_HEATER_ON_SET(as, isHeaterOn());
-        as = TREC_FAN_PCT_SET(as, getFanSpeedPct());
-        rec.actuator_snapshot = as;
+    int32_t sum10 = 0;
+    for (uint16_t i = 0; i < n; i++) sum10 += hourly[i].temp_x10;
 
-        saveTempRecord(rec);
-        _lastLoggedZone = zone;
-        _lastLogTs = now;
-    };
+    TempAvgRecord day;
+    day.timestamp = hourly[n - 1].timestamp;  // najstarszy z 24 = początek zakończonej doby
+    day.temp_x10  = (int16_t)lroundf((float)sum10 / n);
+    saveDailyRecord(day);
+}
 
-    if (!_bootLogged) {
-        writeRecord(REASON_BOOT);
-        _bootLogged = true;
+// Wołane co pętlę (~100ms z main.cpp), NIEZALEŻNIE od 15s cyklu update()/sensora:
+// granica lokalnej północy pokrywa się z restartem urządzenia (main.cpp planuje
+// go dokładnie na najbliższą lokalną północ), który jest sprawdzany co pętlę —
+// gdyby detekcja granicy godziny była związana z 15s cyklem update(), restart
+// mógłby wygrać wyścig i zabić proces przed flushem/rollupem ostatniej godziny doby.
+void TempAlgorithm::checkLogRollover() {
+    time_t ts = (time_t)getUnixTimestamp();
+    struct tm t;
+    localtime_r(&ts, &t);
+    if (t.tm_year <= 120) return;  // RTC/NTP jeszcze nie zsynchronizowany (rok < 2020)
+
+    int32_t hourKey = ((int32_t)t.tm_year * 366 + t.tm_yday) * 24 + t.tm_hour;
+    if (_lastHourKey < 0) {
+        _lastHourKey = hourKey;  // pierwszy tick po boot — nie flushuj nieistniejącego okresu
         return;
     }
+    if (hourKey == _lastHourKey) return;
 
-    if (zone != _lastLoggedZone) {
-        if (now - _lastLogTs >= LOG_MIN_EVENT_INTERVAL_S) {
-            writeRecord(REASON_ZONE_CHANGE);
-        }
-        return;  // za wcześnie od ostatniego zapisu — kolejna próba w następnym ticku
-    }
+    bool dayChanged = (hourKey / 24) != (_lastHourKey / 24);
+    uint32_t hourStartTs = (uint32_t)(ts - (ts % 3600) - 3600);
+    _flushHourlyAccumulator(hourStartTs);
+    if (dayChanged) _rollupDailyAverage();
 
-    if (now - _lastLogTs >= LOG_HEARTBEAT_INTERVAL_S) {
-        writeRecord(REASON_HEARTBEAT);
-    }
+    _lastHourKey = hourKey;
 }
 
 bool TempAlgorithm::loadConfig() {
@@ -259,26 +263,6 @@ bool TempAlgorithm::saveConfig() {
 bool TempAlgorithm::setConfig(const ThermoConfig& cfg) {
     _config = cfg;
     return saveConfig();
-}
-
-bool TempAlgorithm::loadLogZoneConfig() {
-    if (loadLogZoneConfigFromFRAM(_logZoneConfig)) {
-        LOG_INFO("LogZoneConfig loaded from FRAM: normal=%.1f low1=%.1f high1=%.1f",
-                 _logZoneConfig.normal_delta, _logZoneConfig.low_step_1, _logZoneConfig.high_step_1);
-        return true;
-    }
-    _applyLogZoneDefaults();
-    LOG_WARNING("LogZoneConfig not found/invalid in FRAM — using defaults");
-    return false;
-}
-
-bool TempAlgorithm::saveLogZoneConfig() {
-    return saveLogZoneConfigToFRAM(_logZoneConfig);
-}
-
-bool TempAlgorithm::setLogZoneConfig(const LogZoneConfig& cfg) {
-    _logZoneConfig = cfg;
-    return saveLogZoneConfig();
 }
 
 void TempAlgorithm::muteActiveAlarms() {

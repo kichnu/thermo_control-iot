@@ -24,12 +24,13 @@ void setFanSpeed(uint8_t pct) {
 
 uint8_t getFanSpeedPct() { return s_fan_pct; }
 
-uint8_t calcFanSpeed(float temp, float cool_start_abs, float cool_full_abs) {
-    if (temp <= cool_start_abs) return 0;
-    if (temp >= cool_full_abs)  return 100;
+uint8_t calcFanSpeed(float temp, float cool_start_abs, float cool_full_abs, uint8_t min_pct) {
+    if (temp >= cool_full_abs) return 100;
     float range = cool_full_abs - cool_start_abs;
-    if (range < 0.01f) return 100;
-    return (uint8_t)((temp - cool_start_abs) / range * 100.0f);
+    float linear = (range < 0.01f) ? 100.0f : (temp - cool_start_abs) / range * 100.0f;
+    if (linear < 0.0f) linear = 0.0f;
+    uint8_t pct = (uint8_t)linear;
+    return pct > min_pct ? pct : min_pct;
 }
 
 void fanEmergencyOff() { ledcWrite(FAN_PWM_PIN, 0); s_fan_pct = 0; }

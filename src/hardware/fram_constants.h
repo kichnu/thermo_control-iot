@@ -22,36 +22,43 @@
 #define FRAM_CREDENTIALS_ADDR   0x0018
 #define FRAM_CREDENTIALS_SIZE   1024
 
-// 0x0500–0x055D: System data
-// Uwaga: ThermoConfig realnie 44B (10 float+u16+2×u8), EnergyStore realnie 12B
-// (checksum wbudowany w struct) — poprawione static_assert w algorithm_config.h,
-// dawne komentarze "40B"/"16B" były błędne od commitu Etap 0.
-#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (44B)
-#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x052C  // 2B checksum
-#define FRAM_ADDR_LOG_ZONE_CONFIG   0x052E  // LogZoneConfig (20B) — progi LogZone z GUI
-                                             // (2026-07-13: usunięte martwe low_step_3/
-                                             // high_step_3, było 28B — adresy poniżej
-                                             // przesunięte, stary zapis odrzuci się przez
-                                             // checksum mismatch i wróci do defaultów)
-#define FRAM_ADDR_LOG_ZONE_CHKSUM   0x0542  // 2B checksum
-// 0x0544–0x054B: gap (8B rezerwa, po zmniejszeniu LogZoneConfig)
-#define FRAM_ADDR_ENERGY_STORE      0x054C  // EnergyStore (12B, checksum wbudowany)
-#define FRAM_ADDR_BUF_COUNT         0x0558  // 2B — liczba zapisanych rekordów
-#define FRAM_ADDR_BUF_WPTR          0x055A  // 2B — write pointer (0–799)
-#define FRAM_ADDR_BUF_META_CHKSUM   0x055C  // 2B checksum metadanych
-// 0x055E–0x05FF: gap (162B rezerwa)
+// 0x0500–0x0547: System config + metadane 3 ringów
+// Uwaga: ThermoConfig realnie 40B (9 float+u16+2×u8), EnergyStore realnie 12B
+// (checksum wbudowany w struct) — static_assert w algorithm_config.h.
+#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (40B)
+#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x0528  // 2B checksum
+#define FRAM_ADDR_ENERGY_STORE      0x052A  // EnergyStore (12B, checksum wbudowany)
 
-// 0x0600–0x1EFF: Ring buffer, event-driven (zmiana strefy/heartbeat/boot,
-// nie periodic co 30 min — patrz pamięć projektu fram_event_logging)
-// 800 × 8B = 6400B. Pokrycie zmienne (zależne od częstości zdarzeń):
-// ~800 dni gdy stabilnie (sam heartbeat), ~16,6 doby w najgorszym razie
-// (ciągłe flapowanie co 30 min = min. odstęp między zdarzeniami).
-#define FRAM_ADDR_RING_BUFFER       0x0600
-#define RING_BUFFER_CAPACITY        800     // rekordów
-#define RING_RECORD_SIZE            8       // bajtów (sizeof(TempRecord))
-// koniec bufora: 0x0600 + 6400 = 0x1EFF
+// Metadane ring bufferów (count/wptr/checksum, 6B każdy — wzorzec jak w
+// pierwotnym ring bufferze event-driven, patrz calculateChecksum(wptr+count))
+#define FRAM_ADDR_HOURLY_COUNT      0x0536  // 2B
+#define FRAM_ADDR_HOURLY_WPTR       0x0538  // 2B
+#define FRAM_ADDR_HOURLY_META_CHKSUM 0x053A // 2B
+#define FRAM_ADDR_DAILY_COUNT       0x053C  // 2B
+#define FRAM_ADDR_DAILY_WPTR        0x053E  // 2B
+#define FRAM_ADDR_DAILY_META_CHKSUM 0x0540  // 2B
+#define FRAM_ADDR_ALARM_COUNT       0x0542  // 2B
+#define FRAM_ADDR_ALARM_WPTR        0x0544  // 2B
+#define FRAM_ADDR_ALARM_META_CHKSUM 0x0546  // 2B
+// 0x0548–0x05FF: gap (184B rezerwa)
 
-// 0x1F00–0x1FFF: wolne (256B rezerwa)
+// 0x0600–0x06BF: Ring godzinowy — HOURLY_BUFFER_CAPACITY(24) × 8B = 192B
+// rolling 24h, nadpisywany co godzinę (nawet niepełną — patrz pamięć projektu,
+// restart o północy gwarantuje ≥1 niepełną godzinę dziennie). sizeof(TempAvgRecord)
+// to logicznie 6B (4B+2B), ale kompilator dopełnia do 8B — przyjęte wprost.
+#define FRAM_ADDR_HOURLY_BUFFER     0x0600
+#define HOURLY_RECORD_SIZE          8       // sizeof(TempAvgRecord), padded
+
+// 0x06C0–0x122F: Ring dobowy — DAILY_BUFFER_CAPACITY(366) × 8B = 2928B
+// średnia z 24 rekordów godzinowych, zapisywana przy zmianie doby lokalnej
+#define FRAM_ADDR_DAILY_BUFFER      0x06C0
+#define DAILY_RECORD_SIZE           8       // sizeof(TempAvgRecord), padded
+
+// 0x1230–0x1B8F: Ring zdarzeń alarmowych — ALARM_BUFFER_CAPACITY(300) × 8B = 2400B
+#define FRAM_ADDR_ALARM_BUFFER      0x1230
+#define ALARM_RECORD_SIZE           8       // sizeof(AlarmEvent)
+
+// 0x1B90–0x1FFF: wolne (1136B rezerwa)
 
 // ============================================================
 // ENCRYPTION (credentials — bez zmian z ATO)

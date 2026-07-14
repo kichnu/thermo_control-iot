@@ -11,11 +11,11 @@
 //
 // Thermo:
 //   GET  /api/status
-//   GET  /api/history
+//   GET  /api/history-hourly
+//   GET  /api/history-daily
+//   GET  /api/alarm-events
 //   GET  /api/thermo-config
 //   POST /api/thermo-config
-//   GET  /api/log-zone-config
-//   POST /api/log-zone-config
 //   POST /api/mute-alarm
 //   POST /api/system-toggle
 //   GET  /api/energy
@@ -25,11 +25,11 @@
 void registerThermoHandlers(AsyncWebServer& server);
 
 void handleStatus(AsyncWebServerRequest* request);
-void handleHistory(AsyncWebServerRequest* request);
+void handleHourlyHistory(AsyncWebServerRequest* request);
+void handleDailyHistory(AsyncWebServerRequest* request);
+void handleAlarmEvents(AsyncWebServerRequest* request);
 void handleGetThermoConfig(AsyncWebServerRequest* request);
 void handleSetThermoConfig(AsyncWebServerRequest* request);
-void handleGetLogZoneConfig(AsyncWebServerRequest* request);
-void handleSetLogZoneConfig(AsyncWebServerRequest* request);
 void handleMuteAlarm(AsyncWebServerRequest* request);
 void handleSystemToggle(AsyncWebServerRequest* request);
 void handleEnergy(AsyncWebServerRequest* request);
