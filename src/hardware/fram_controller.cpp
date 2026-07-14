@@ -394,3 +394,17 @@ uint16_t loadAlarmEvents(AlarmEvent* buf, uint16_t maxCount) {
 uint16_t getAlarmEventCount() {
     return getRingCount(ALARM_BUFFER_CAPACITY, FRAM_ADDR_ALARM_COUNT, FRAM_ADDR_ALARM_WPTR, FRAM_ADDR_ALARM_META_CHKSUM);
 }
+
+// ---- Czyszczenie (count=0, wptr=0 — dane pod spodem zostają, tylko niewidoczne) ----
+
+void clearHourlyHistory() {
+    writeRingMeta(FRAM_ADDR_HOURLY_COUNT, FRAM_ADDR_HOURLY_WPTR, FRAM_ADDR_HOURLY_META_CHKSUM, 0, 0);
+}
+
+void clearDailyHistory() {
+    writeRingMeta(FRAM_ADDR_DAILY_COUNT, FRAM_ADDR_DAILY_WPTR, FRAM_ADDR_DAILY_META_CHKSUM, 0, 0);
+}
+
+void clearAlarmEvents() {
+    writeRingMeta(FRAM_ADDR_ALARM_COUNT, FRAM_ADDR_ALARM_WPTR, FRAM_ADDR_ALARM_META_CHKSUM, 0, 0);
+}

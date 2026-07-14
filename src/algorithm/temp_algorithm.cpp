@@ -22,18 +22,27 @@ void TempAlgorithm::update() {
         return;  // system wstrzymany — grzałka/fan pod ręcznym sterowaniem (test GUI)
     }
 
+    if (_sensorFaultLatched) {
+        // Awaria krytyczna, zatrzaśnięta — grzałka/fan zamrożone dopóki ktoś
+        // ręcznie nie potwierdzi (resetSensorFaultLatch()), NIEZALEŻNIE od tego,
+        // czy czujnik akurat teraz daje poprawne odczyty.
+        heaterEmergencyOff();
+        fanEmergencyOff();
+        return;
+    }
+
     if (!isTempValid()) {
         bool sensorFault = getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD;
         _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault, getTemperature());
         if (sensorFault) {
             _state = STATE_SENSOR_FAULT;
+            _sensorFaultLatched = true;
             heaterEmergencyOff();
             fanEmergencyOff();
             if (!(_muted_flags & ALARM_FLAG_SENSOR)) setBuzzerMode(BUZZER_ALARM);
         }
         return;  // brak ważnego odczytu — nic do zaakumulowania w buforze godzinowym
     }
-    _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // czujnik znów sprawny — czyści flagę i mute
 
     float temp = getTemperature();
     _accumulateHourlySample(temp);
@@ -43,6 +52,12 @@ void TempAlgorithm::update() {
     }
     _updateHeater(temp);
     _updateFan(temp);
+}
+
+void TempAlgorithm::resetSensorFaultLatch() {
+    _sensorFaultLatched = false;
+    _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // czyści widoczną flagę/mute, jeśli czujnik już OK
+    LOG_WARNING("TempAlgorithm: sensor fault latch zresetowany ręcznie — jeśli usterka wciąż trwa, zatrzaśnie się ponownie na następnym cyklu");
 }
 
 void TempAlgorithm::_applyDefaults() {
@@ -56,20 +71,28 @@ void TempAlgorithm::_applyDefaults() {
     _config.temp_offset      = DEFAULT_TEMP_OFFSET;
     _config.heater_watt      = DEFAULT_HEATER_WATT;
     _config.pulses_per_kwh   = DEFAULT_PULSES_PER_KWH;
+    _config.trend_window_min = DEFAULT_TREND_WINDOW_MIN;
     _config.is_configured    = 0;
     _config.fan_min_pct      = DEFAULT_FAN_MIN_PCT;
 }
 
 // Histereza symetryczna wokół target_temp, jeden parametr na kanał (patrz pamięć
 // projektu): ON przy target - heat_hyst, OFF dokładnie przy target_temp (>=).
+// Zbocze OFF→ON to też punkt odniesienia dla _checkTrendAlarm() — początek
+// BIEŻĄCEGO ciągłego grzania (nie resetowany, dopóki grzałka pracuje bez przerwy).
 void TempAlgorithm::_updateHeater(float temp) {
     float on_thresh = _config.target_temp - _config.heat_hyst;
     if (temp < on_thresh) {
+        if (_state != STATE_HEATING) {
+            _heatStartTs   = (uint32_t)getUnixTimestamp();
+            _heatStartTemp = temp;
+        }
         setHeaterOn();
         _state = STATE_HEATING;
     } else if (temp >= _config.target_temp && _state == STATE_HEATING) {
         setHeaterOff();
         _state = STATE_IDLE;
+        _heatStartTs = 0;  // ciągłe grzanie zakończone sukcesem — brak punktu odniesienia
     }
 }
 
@@ -95,21 +118,23 @@ void TempAlgorithm::_updateFan(float temp) {
     else if (!_fanActive && _state == STATE_COOLING) _state = STATE_IDLE;
 }
 
-// AlarmEventType odpowiadający fladze i kierunkowi zbocza — patrz algorithm_config.h.
-static AlarmEventType alarmEventTypeFor(uint8_t flag, bool starting) {
+// AlarmEventType odpowiadający fladze — patrz algorithm_config.h.
+static AlarmEventType alarmEventTypeFor(uint8_t flag) {
     switch (flag) {
-        case ALARM_FLAG_TEMP_LOW:  return starting ? ALARM_EVT_LOW_START    : ALARM_EVT_LOW_END;
-        case ALARM_FLAG_TEMP_HIGH: return starting ? ALARM_EVT_HIGH_START   : ALARM_EVT_HIGH_END;
-        case ALARM_FLAG_TREND:     return starting ? ALARM_EVT_TREND_START  : ALARM_EVT_TREND_END;
-        default:                   return starting ? ALARM_EVT_SENSOR_START : ALARM_EVT_SENSOR_END;
+        case ALARM_FLAG_TEMP_LOW:  return ALARM_EVT_LOW;
+        case ALARM_FLAG_TEMP_HIGH: return ALARM_EVT_HIGH;
+        case ALARM_FLAG_TREND:     return ALARM_EVT_TREND;
+        default:                   return ALARM_EVT_SENSOR;
     }
 }
 
-void TempAlgorithm::_logAlarmEvent(uint8_t flag, bool starting, float temp) {
+// Loguje sam FAKT wystąpienia (2026-07-14, user: bez end/duration — wystarczy
+// wiedzieć, że alarm był, żeby wyłowić go z długookresowego wykresu temp).
+void TempAlgorithm::_logAlarmEvent(uint8_t flag, float temp) {
     AlarmEvent ev;
     ev.timestamp = (uint32_t)getUnixTimestamp();
     ev.temp_x10  = (int16_t)roundf(temp * 10.0f);
-    ev.type      = alarmEventTypeFor(flag, starting);
+    ev.type      = alarmEventTypeFor(flag);
     ev._pad      = 0;
     saveAlarmEvent(ev);
 }
@@ -118,12 +143,30 @@ void TempAlgorithm::_setAlarmFlag(uint8_t flag, bool active, float temp) {
     bool wasActive = (_alarm_flags & flag) != 0;
     if (active && !wasActive) {
         _alarm_flags |= flag;
-        _logAlarmEvent(flag, true, temp);
+        _logAlarmEvent(flag, temp);
     } else if (!active && wasActive) {
         _alarm_flags &= ~flag;
         _muted_flags &= ~flag;  // warunek ustąpił — kolejne wystąpienie znów zadźwięczy
-        _logAlarmEvent(flag, false, temp);
     }
+}
+
+// Grzałka pracuje ciągle od >= trend_window_min minut, ale temperatura nie
+// wzrosła o trend_alarm_delta względem punktu startu tego ciągłego grzania
+// (_heatStartTs/_heatStartTemp, ustawiane w _updateHeater() na zboczu OFF→ON).
+// Zamiast okna 5 min ze stałym progiem spadku (stare podejście, zbyt czułe/
+// nieadekwatne do bezwładności 240L) — user, 2026-07-14, do przetestowania
+// w terenie zanim domkniemy domyślne wartości.
+bool TempAlgorithm::_checkTrendAlarm(float temp) const {
+    if (!isHeaterOn() || _state != STATE_HEATING) return false;
+    if (_heatStartTs == 0) return false;  // brak punktu odniesienia (dopiero co ruszyło grzanie)
+
+    uint32_t now = (uint32_t)getUnixTimestamp();
+    if (now < _heatStartTs) return false;  // zegar się cofnął (resync RTC) — nie ufaj
+    uint32_t elapsed_s = now - _heatStartTs;
+    if (elapsed_s < (uint32_t)_config.trend_window_min * 60UL) return false;  // okno jeszcze się nie domknęło
+
+    float rise = temp - _heatStartTemp;
+    return rise < _config.trend_alarm_delta;
 }
 
 void TempAlgorithm::_updateAlarms(float temp) {
@@ -164,8 +207,8 @@ void TempAlgorithm::_updateAlarms(float temp) {
         _state = STATE_IDLE;
     }
 
-    // Trend: SSR ON i szybki spadek temp w oknie 5 min (patrz ARCHITECTURE_SKELETON.md)
-    bool trend_now = isHeaterOn() && isTrendAlarm(_config.trend_alarm_delta);
+    // Trend: grzałka ON od >= trend_window_min minut bez wystarczającego wzrostu temp.
+    bool trend_now = _checkTrendAlarm(temp);
     _setAlarmFlag(ALARM_FLAG_TREND, trend_now, temp);
     if (trend_now) {
         _state = STATE_TREND_ALARM;

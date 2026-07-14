@@ -17,6 +17,7 @@
 //   GET  /api/thermo-config
 //   POST /api/thermo-config
 //   POST /api/mute-alarm
+//   POST /api/reset-sensor-fault
 //   POST /api/system-toggle
 //   GET  /api/energy
 //   POST /api/energy-reset-day
@@ -31,6 +32,9 @@ void handleAlarmEvents(AsyncWebServerRequest* request);
 void handleGetThermoConfig(AsyncWebServerRequest* request);
 void handleSetThermoConfig(AsyncWebServerRequest* request);
 void handleMuteAlarm(AsyncWebServerRequest* request);
+
+// SENSOR_FAULT to alarm krytyczny (latch) — nie wraca sam, wymaga tego wywołania
+void handleResetSensorFault(AsyncWebServerRequest* request);
 void handleSystemToggle(AsyncWebServerRequest* request);
 void handleEnergy(AsyncWebServerRequest* request);
 void handleEnergyResetDay(AsyncWebServerRequest* request);
@@ -40,6 +44,11 @@ void handleTestFan(AsyncWebServerRequest* request);
 
 // Test: ręczne sterowanie grzałką z GUI (bypass algorytmu) — POST on=0|1
 void handleTestHeater(AsyncWebServerRequest* request);
+
+// Test: wypełnia/czyści bufory hourly/daily/alarm losowymi danymi demo — do
+// pracy nad GUI przed zebraniem prawdziwej historii przez urządzenie.
+void handleTestSeedHistory(AsyncWebServerRequest* request);
+void handleTestClearHistory(AsyncWebServerRequest* request);
 
 // ============================================================
 // Auth + strony statyczne (bez zmian z ATO)

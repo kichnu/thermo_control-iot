@@ -6,10 +6,12 @@
 
 // Automat sterowania temperaturą:
 //  - histereza symetryczna (jeden parametr/kanał, OFF przy target_temp) dla SSR grzałki i PWM wentylatora
-//  - detekcja alarmu trendu (RAM bufor)
+//  - detekcja alarmu trendu: grzałka ON od >= trend_window_min minut bez wystarczającego wzrostu temp.
+//  - SENSOR_FAULT to awaria KRYTYCZNA — latch, grzałka/fan zamrożone do ręcznego resetu
+//    (resetSensorFaultLatch()), nawet gdy czujnik sam wróci do zdrowia
 //  - logowanie: bufor godzinowy (RAM-owy accumulator → FRAM co godzinę),
-//    bufor dobowy (średnia z 24 godzinowych), log zdarzeń alarmowych
-//    (start/end epizodu) — patrz TempAvgRecord/AlarmEvent w algorithm_config.h
+//    bufor dobowy (średnia z 24 godzinowych), log faktów wystąpienia alarmu
+//    (bez start/end) — patrz TempAvgRecord/AlarmEvent w algorithm_config.h
 
 class TempAlgorithm {
 public:
@@ -27,6 +29,15 @@ public:
     // ponownie, znów zadźwięczy (patrz _setAlarmFlag()).
     void           muteActiveAlarms();
 
+    // SENSOR_FAULT jako awaria krytyczna (2026-07-14, user): raz zatrzaśnięta,
+    // grzałka/fan zostają wymuszone OFF w KAŻDYM update() dopóki ktoś ręcznie
+    // nie potwierdzi — sam powrót czujnika do zdrowia NIE wystarcza (to
+    // świadomie inne zachowanie niż ALARM_LOW/HIGH/TREND, które same wracają
+    // do normy). Jeśli usterka wciąż trwa, kolejny update() i tak natychmiast
+    // zatrzaśnie ponownie.
+    bool           isSensorFaultLatched() const { return _sensorFaultLatched; }
+    void           resetSensorFaultLatch();
+
     // Konfiguracja (ładowana z FRAM lub defaults)
     bool           loadConfig();
     bool           saveConfig();
@@ -39,6 +50,7 @@ private:
     uint8_t          _muted_flags = 0;   // wyciszone przez muteActiveAlarms(), per-epizod
     ThermoConfig     _config      = {};
     bool             _fanActive   = false;  // latch: ON przy temp>cool_start_abs, OFF przy temp<=target_temp
+    bool             _sensorFaultLatched = false;
 
     // Akumulator godzinowy — TYLKO RAM, flushowany do FRAM przy zmianie godziny.
     float            _hourAccumSum   = 0.0f;
@@ -47,18 +59,25 @@ private:
     // -1 = jeszcze nie zainicjalizowany (pierwszy tick po boot, nic nie flushuj).
     int32_t          _lastHourKey    = -1;
 
+    // Punkt odniesienia dla trendu: początek BIEŻĄCEGO ciągłego grzania
+    // (resetowany na każdym zboczu OFF→ON w _updateHeater). 0 = brak punktu
+    // odniesienia (grzałka aktualnie nie grzeje od dłuższego czasu).
+    uint32_t         _heatStartTs   = 0;
+    float             _heatStartTemp = 0.0f;
+
     void _applyDefaults();
     void _updateHeater(float temp);
     void _updateFan(float temp);
     void _updateAlarms(float temp);
+    bool _checkTrendAlarm(float temp) const;
     void _accumulateHourlySample(float temp);
     void _flushHourlyAccumulator(uint32_t hourStartTs);
     void _rollupDailyAverage();
-    void _logAlarmEvent(uint8_t flag, bool starting, float temp);
-    // Ustawia/czyści bit w _alarm_flags; przy zboczu 0→1/1→0 loguje AlarmEvent,
-    // a przy 1→0 kasuje też odpowiadający bit w _muted_flags, żeby kolejne
-    // wystąpienie tego samego typu alarmu znów zadźwięczyło (mute nie jest
-    // permanentny per-typ, tylko per-epizod).
+    void _logAlarmEvent(uint8_t flag, float temp);
+    // Ustawia/czyści bit w _alarm_flags; przy zboczu 0→1 loguje AlarmEvent
+    // (fakt wystąpienia, bez end/duration), a przy 1→0 kasuje odpowiadający
+    // bit w _muted_flags, żeby kolejne wystąpienie tego samego typu alarmu
+    // znów zadźwięczyło (mute nie jest permanentny per-typ, tylko per-epizod).
     void _setAlarmFlag(uint8_t flag, bool active, float temp);
 };
 

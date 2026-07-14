@@ -12,13 +12,9 @@
 void     initTempSensor();
 void     updateTempSensor();        // wywołuj co TEMP_MEASURE_INTERVAL_S
 
-bool     isTempValid();             // false = brak czujnika lub błąd CRC
+bool     isTempValid();             // false = brak czujnika lub błąd CRC (po wyczerpaniu retry)
 float    getTemperature();          // ostatni ważny odczyt [°C] + offset kalibracji
 int16_t  getTemperatureX10();       // temp × 10 dla FRAM (250 = 25.0°C)
-uint8_t  getSensorFaultCount();     // liczba kolejnych błędów (reset po valid read)
-
-// Trend bufor (ostatnie TREND_ALARM_SAMPLES próbek = 5 min przy 15s interwale, RAM)
-// delta_threshold — próg spadku [°C] w oknie 5 min (ThermoConfig::trend_alarm_delta)
-bool     isTrendAlarm(float delta_threshold);
+uint8_t  getSensorFaultCount();     // liczba kolejnych w pełni nieudanych CYKLI (reset po valid read)
 
 #endif // TEMP_SENSOR_H

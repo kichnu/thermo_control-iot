@@ -61,4 +61,10 @@ bool     saveAlarmEvent(const AlarmEvent& ev);
 uint16_t loadAlarmEvents(AlarmEvent* buf, uint16_t maxCount);       // newest-first
 uint16_t getAlarmEventCount();
 
+// Czyści bufor (count=0, wptr=0) — dane pod spodem zostają w FRAM, ale są
+// logicznie niewidoczne. Używane przez /api/test/clear-history.
+void clearHourlyHistory();
+void clearDailyHistory();
+void clearAlarmEvents();
+
 #endif

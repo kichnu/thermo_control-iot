@@ -359,26 +359,43 @@ poprzednio. Szczegóły decyzji: pamięć projektu `fram_event_logging`.
 
 ## 7. API endpoints
 
+> Uwaga (2026-07-14): zaktualizowane po redesignie logowania — `/api/history`
+> i `/api/log-zone-config` (opisane niżej w tym dokumencie jako "Nowe") już
+> NIE ISTNIEJĄ, zastąpione trzema prostymi buforami. Patrz pamięć projektu
+> `hourly_daily_alarm_ring_redesign_2026-07-14`.
+
 Bez zmian (z ATO): `POST /api/login`, `POST /api/logout`, `GET /api/health`
 
-Nowe:
+Aktualne:
 ```
 GET  /api/status             — temp_c, state, fan_pct, heater_on, power_w,
                                alarm_flags, energy_kwh_today, energy_kwh_total
-GET  /api/history            — ring buffer 800 rek. event-driven (newest-first,
-                               pokrycie zmienne — patrz sekcja 6)
+GET  /api/history-hourly     — bufor godzinowy, rolling 24h (newest-first)
+GET  /api/history-daily      — bufor dobowy, ~rok (newest-first)
+GET  /api/alarm-events       — epizody alarmowe start/end, max 100 zwracanych
+                               (newest-first), bufor mieści 300
 GET  /api/thermo-config
-POST /api/thermo-config      — wszystkie pola ThermoConfig (form-encoded)
-GET  /api/log-zone-config
-POST /api/log-zone-config    — progi LogZoneConfig: normal_delta, low_step_1-2,
-                               high_step_1-2 (form-encoded); walidacja monotoniczności
-                               po stronie serwera (step_1<step_2, step_1>normal_delta).
-                               Stopień 3 = powyżej step_2, nieograniczony, bez configu.
+POST /api/thermo-config      — wszystkie pola ThermoConfig (form-encoded);
+                               heat_hyst/cool_start >= 0.1°C (walidacja serwera)
 POST /api/mute-alarm         — wycisza buzzer dla alarmów aktywnych w tej chwili
                                (per-epizod — kolejne wystąpienie znów zadźwięczy)
 POST /api/system-toggle      — Auto Mode / Service Mode (enable/disable)
 GET  /api/energy             — total_kwh, today_kwh, pulse_count, power_w_now
 POST /api/energy-reset-day   — reset licznika dobowego
+POST /api/test/fan           — pct=0-100, ręczne sterowanie (bypass algorytmu)
+POST /api/test/heater        — on=0|1, ręczne sterowanie (bypass algorytmu)
+POST /api/test/seed-history  — wypełnia hourly/daily/alarm losowymi danymi demo
+POST /api/test/clear-history — czyści hourly/daily/alarm (count/wptr=0)
+```
+
+Wszystkie powyższe (poza `/api/health`) wymagają sesji — najpierw zaloguj się
+i zapisz cookie, potem wywołuj z tym cookie:
+```bash
+curl -c cookies.txt -d "password=TWOJE_HASLO" http://<ip>/api/login
+
+# do pracy nad GUI, zanim urządzenie zbierze prawdziwą historię:
+curl -b cookies.txt -X POST http://<ip>/api/test/seed-history
+curl -b cookies.txt -X POST http://<ip>/api/test/clear-history
 ```
 
 ---

@@ -7,12 +7,20 @@
 // POMIAR TEMPERATURY
 // ============================================================
 #define TEMP_MEASURE_INTERVAL_S     15      // co ile sekund odczyt STS35
-#define TREND_ALARM_SAMPLES         20      // próbek w RAM dla detekcji trendu
 
 // ============================================================
-// SENSOR FAULT
+// SENSOR FAULT — dwie warstwy tolerancji na przejściowe zakłócenia I2C
+// (SSR/PWM w tej samej obudowie = realne źródło EMI, nawet przy sprawnym
+// kablu — patrz pamięć projektu). Warstwa 1: szybki retry w środku
+// pojedynczego cyklu (temp_sensor.cpp). Warstwa 2: licznik kolejnych
+// nieudanych CYKLI (nie prób) — dopiero po SENSOR_FAULT_THRESHOLD w pełni
+// nieudanych cyklach z rzędu ogłaszamy fault. To jest AWARIA KRYTYCZNA:
+// zatrzymuje grzałkę/fan na stałe (latch), do ręcznego resetu w GUI/API
+// — nawet gdy czujnik sam wróci do zdrowia (patrz TempAlgorithm).
 // ============================================================
-#define SENSOR_FAULT_THRESHOLD      3       // kolejnych błędów CRC → STATE_SENSOR_FAULT
+#define SENSOR_FAULT_THRESHOLD      3       // kolejnych w pełni nieudanych CYKLI → STATE_SENSOR_FAULT (latch)
+#define STS35_RETRY_COUNT           3        // prób odczytu w jednym cyklu, zanim cykl liczy się jako nieudany
+#define STS35_RETRY_DELAY_MS        50       // odstęp między próbami w cyklu
 
 // ============================================================
 // DOMYŚLNA KONFIGURACJA
@@ -24,7 +32,12 @@
 #define DEFAULT_FAN_MIN_PCT         30      // floor rampy fana (poniżej fan się nie rusza / jest nieefektywny)
 #define DEFAULT_ALARM_DELTA_LOW     2.0f    // ALARM poniżej T - X
 #define DEFAULT_ALARM_DELTA_HIGH    1.5f    // ALARM powyżej T + X
-#define DEFAULT_TREND_ALARM_DELTA   0.5f    // spadek [°C/5min] przy SSR ON → alarm
+// Trend: grzałka ON od co najmniej trend_window_min minut, a temperatura nie
+// wzrosła o trend_alarm_delta — czyli grzałka "pracuje", ale nieskutecznie
+// (przepalony element, brak zasilania mimo sterowania). 0.2°C, bo 0.1°C to już
+// rozdzielczość pomiaru STS35 — mniejszy próg tonąłby w szumie.
+#define DEFAULT_TREND_ALARM_DELTA   0.2f    // wymagany wzrost temp. w oknie [°C]
+#define DEFAULT_TREND_WINDOW_MIN    60      // długość okna [min] — do przetestowania w terenie
 #define DEFAULT_TEMP_OFFSET         0.0f    // kalibracja czujnika
 #define DEFAULT_HEATER_WATT         0.0f    // moc grzałek [W] — user wpisuje
 #define DEFAULT_PULSES_PER_KWH      1000    // miernik energii
@@ -43,7 +56,7 @@
 // ============================================================
 #define HOURLY_BUFFER_CAPACITY   24    // rolling 24h — nadpisywany co godzinę
 #define DAILY_BUFFER_CAPACITY    366   // ~rok (+dzień przestępny) średnich dobowych
-#define ALARM_BUFFER_CAPACITY    300   // epizody alarmowe (start/end), patrz AlarmEvent
+#define ALARM_BUFFER_CAPACITY    300   // fakty wystąpienia alarmu (jeden wpis/wystąpienie, patrz AlarmEvent)
 
 // ============================================================
 // STANY AUTOMATU (sterowanie aktuatorami — bez zmian)
@@ -77,14 +90,15 @@ struct ThermoConfig {
     float    cool_full;         // fan 100% gdy temp > target + cool_full
     float    alarm_delta_low;   // ALARM gdy temp < target - X
     float    alarm_delta_high;  // ALARM gdy temp > target + X
-    float    trend_alarm_delta; // ALARM gdy spadek > X °C / 5 min
+    float    trend_alarm_delta; // wymagany wzrost temp. [°C] w oknie trend_window_min, przy ciągłym grzaniu
     float    temp_offset;       // kalibracja czujnika STS35 [°C]
     float    heater_watt;       // moc znamionowa grzałek [W]
     uint16_t pulses_per_kwh;    // konfiguracja miernika energii
+    uint16_t trend_window_min;  // długość okna detekcji trendu [min], patrz trend_alarm_delta
     uint8_t  is_configured;     // THERMO_CONFIG_MAGIC = ważna konfiguracja
     uint8_t  fan_min_pct;       // floor rampy fana [%] (0-100), patrz DEFAULT_FAN_MIN_PCT
 };
-static_assert(sizeof(ThermoConfig) == 40, "ThermoConfig must be 40 bytes"); // 9 float + u16 + 2×u8 = 40B
+static_assert(sizeof(ThermoConfig) == 44, "ThermoConfig must be 44 bytes"); // 9 float + 2×u16 + 2×u8 = 44B (padded)
 
 // ============================================================
 // REKORD ŚREDNIEJ TEMPERATURY — używany przez bufor godzinowy (24 rekordy,
@@ -99,20 +113,16 @@ struct TempAvgRecord {
 static_assert(sizeof(TempAvgRecord) == 8, "TempAvgRecord must be 8 bytes (padded)");
 
 // ============================================================
-// ZDARZENIA ALARMOWE — start/end epizodu, żeby dało się je "wyłowić"
-// z długookresowego wykresu temp (który sam w sobie nie pokazuje alarmów,
-// bo to tylko uśrednione wartości). Nie steruje aktuatorami — to robi
-// _alarm_flags/_updateAlarms(), niezależnie od tego logu.
+// ZDARZENIA ALARMOWE — sam FAKT wystąpienia (zbocze 0→1 danego typu), żeby
+// dało się je "wyłowić" z długookresowego wykresu temp (który sam w sobie nie
+// pokazuje alarmów, bo to tylko uśrednione wartości). Świadomie BEZ end/duration
+// (2026-07-14, user) — nie steruje aktuatorami, to robi _alarm_flags/_updateAlarms().
 // ============================================================
 enum AlarmEventType : uint8_t {
-    ALARM_EVT_LOW_START    = 0,
-    ALARM_EVT_LOW_END      = 1,
-    ALARM_EVT_HIGH_START   = 2,
-    ALARM_EVT_HIGH_END     = 3,
-    ALARM_EVT_TREND_START  = 4,
-    ALARM_EVT_TREND_END    = 5,
-    ALARM_EVT_SENSOR_START = 6,
-    ALARM_EVT_SENSOR_END   = 7,
+    ALARM_EVT_LOW    = 0,
+    ALARM_EVT_HIGH   = 1,
+    ALARM_EVT_TREND  = 2,
+    ALARM_EVT_SENSOR = 3,
 };
 
 struct AlarmEvent {

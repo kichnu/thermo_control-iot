@@ -50,7 +50,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <h2>System</h2>
   <button id="btnSystemToggle">…</button>
   <button id="btnAck">Wycisz alarm</button>
+  <button id="btnResetSensor" class="danger">Resetuj błąd czujnika</button>
   <button id="btnLogout">Wyloguj</button>
+  <div id="sensorFaultBanner" style="display:none; margin-top:8px; color:#ef5350; font-weight:bold;">
+    ⚠ AWARIA CZUJNIKA (krytyczna) — grzałka i wentylator zamrożone do ręcznego potwierdzenia
+  </div>
 </div>
 
 <div class="card">
@@ -75,7 +79,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <div class="row"><label for="fan_min_pct">Minimalna prędkość wentylatora [%]</label><input type="number" step="1" min="0" max="100" id="fan_min_pct"></div>
   <div class="row"><label for="alarm_delta_low">Próg ALARM_LOW (T−X) [°C]</label><input type="number" step="0.1" id="alarm_delta_low"></div>
   <div class="row"><label for="alarm_delta_high">Próg ALARM_HIGH (T+X) [°C]</label><input type="number" step="0.1" id="alarm_delta_high"></div>
-  <div class="row"><label for="trend_alarm_delta">Próg alarmu trendu (spadek/5min) [°C]</label><input type="number" step="0.1" id="trend_alarm_delta"></div>
+  <div class="row"><label for="trend_alarm_delta">Trend: wymagany wzrost temp. w oknie [°C]</label><input type="number" step="0.1" id="trend_alarm_delta"></div>
+  <div class="row"><label for="trend_window_min">Trend: długość okna [min]</label><input type="number" step="1" min="5" id="trend_window_min"></div>
   <div class="row"><label for="temp_offset">Kalibracja czujnika [°C]</label><input type="number" step="0.1" id="temp_offset"></div>
   <div class="row"><label for="heater_watt">Moc grzałki [W]</label><input type="number" step="1" id="heater_watt"></div>
   <div class="row"><label for="pulses_per_kwh">Impulsy / kWh (miernik energii)</label><input type="number" step="1" id="pulses_per_kwh"></div>
@@ -103,8 +108,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </div>
 
 <div class="card">
-  <h2>Zdarzenia alarmowe (start/koniec epizodu, najnowsze pierwsze)</h2>
+  <h2>Zdarzenia alarmowe (fakt wystąpienia, najnowsze pierwsze)</h2>
   <button id="btnLoadAlarms">Odśwież</button>
+  <div id="alarmSummary" style="margin:8px 0; font-size:.9em; color:#9fb3d1;"></div>
   <table>
     <thead><tr><th>Czas</th><th>Temp</th><th>Zdarzenie</th></tr></thead>
     <tbody id="alarmEventsBody"></tbody>
@@ -112,8 +118,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </div>
 
 <script>
-const ALARM_EVENT_NAMES = ['LOW_START','LOW_END','HIGH_START','HIGH_END',
-                            'TREND_START','TREND_END','SENSOR_START','SENSOR_END'];
+// AlarmEventType w algorithm_config.h — jeden wpis = fakt wystąpienia, bez start/end
+const ALARM_EVENT_NAMES = ['LOW','HIGH','TREND','SENSOR'];
 
 async function refresh() {
   try {
@@ -132,6 +138,7 @@ async function refresh() {
     if (d.alarm_flags & 0x04) flags.push('TREND');
     if (d.alarm_flags & 0x08) flags.push('SENSOR');
     document.getElementById('alarms').textContent = flags.length ? flags.join(', ') : 'brak';
+    document.getElementById('sensorFaultBanner').style.display = d.sensor_fault_latched ? 'block' : 'none';
 
     const e = await fetch('api/energy');
     const en = await e.json();
@@ -144,8 +151,8 @@ async function loadThermoConfig() {
   const r = await fetch('api/thermo-config');
   const c = await r.json();
   for (const k of ['target_temp','heat_hyst','cool_start','cool_full','fan_min_pct',
-                    'alarm_delta_low','alarm_delta_high','trend_alarm_delta','temp_offset',
-                    'heater_watt','pulses_per_kwh']) {
+                    'alarm_delta_low','alarm_delta_high','trend_alarm_delta','trend_window_min',
+                    'temp_offset','heater_watt','pulses_per_kwh']) {
     if (c[k] !== undefined) document.getElementById(k).value = c[k];
   }
 }
@@ -168,6 +175,16 @@ const loadDaily  = () => loadAvgHistory('api/history-daily', 'dailyBody');
 async function loadAlarmEvents() {
   const r = await fetch('api/alarm-events');
   const d = await r.json();
+
+  // Skrót na górze: każdy wpis to fakt wystąpienia (bez start/end), więc liczba
+  // zdarzeń danego typu = liczba wystąpień tego alarmu.
+  const counts = {LOW:0, HIGH:0, TREND:0, SENSOR:0};
+  for (const ev of d.events) counts[ALARM_EVENT_NAMES[ev.type]]++;
+  const parts = ALARM_EVENT_NAMES.filter(c => counts[c] > 0).map(c => `${counts[c]}× ${c}`);
+  document.getElementById('alarmSummary').textContent = d.events.length
+    ? `${d.events.length} wystąpień w zwróconej historii: ${parts.join(', ')}`
+    : 'Brak zdarzeń alarmowych w historii.';
+
   const tbody = document.getElementById('alarmEventsBody');
   tbody.innerHTML = '';
   for (const ev of d.events) {
@@ -205,6 +222,10 @@ document.getElementById('btnAck').addEventListener('click', async () => {
   await fetch('api/mute-alarm', { method: 'POST' });
   refresh();
 });
+document.getElementById('btnResetSensor').addEventListener('click', async () => {
+  await fetch('api/reset-sensor-fault', { method: 'POST' });
+  refresh();
+});
 document.getElementById('btnLogout').addEventListener('click', async () => {
   await fetch('api/logout', { method: 'POST' });
   window.location.href = 'login';
@@ -213,8 +234,8 @@ document.getElementById('btnLogout').addEventListener('click', async () => {
 document.getElementById('btnSaveThermo').addEventListener('click', async () => {
   const body = {};
   for (const k of ['target_temp','heat_hyst','cool_start','cool_full','fan_min_pct',
-                    'alarm_delta_low','alarm_delta_high','trend_alarm_delta','temp_offset',
-                    'heater_watt','pulses_per_kwh']) {
+                    'alarm_delta_low','alarm_delta_high','trend_alarm_delta','trend_window_min',
+                    'temp_offset','heater_watt','pulses_per_kwh']) {
     body[k] = document.getElementById(k).value;
   }
   const r = await fetch('api/thermo-config', { method: 'POST', body: new URLSearchParams(body) });

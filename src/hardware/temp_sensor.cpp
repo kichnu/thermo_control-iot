@@ -14,10 +14,6 @@ static float    s_last_temp   = 0.0f;
 static uint8_t  s_fault_count = 0;
 static bool     s_valid       = false;
 
-static int16_t  s_trend_buf[TREND_ALARM_SAMPLES] = {};
-static uint8_t  s_trend_idx   = 0;
-static bool     s_trend_full  = false;
-
 static uint8_t sts35_crc(uint8_t msb, uint8_t lsb) {
     uint8_t crc = 0xFF;
     uint8_t data[2] = {msb, lsb};
@@ -63,22 +59,28 @@ void initTempSensor() {
     }
 }
 
+// Warstwa 1 tolerancji na przejściowe zakłócenia I2C (SSR/PWM w tej samej
+// obudowie = realne źródło EMI nawet przy sprawnym kablu): do STS35_RETRY_COUNT
+// prób w jednym cyklu, zanim w ogóle policzymy cykl jako nieudany. Warstwa 2
+// (SENSOR_FAULT_THRESHOLD, kolejne w PEŁNI nieudane cykle) zostaje bez zmian
+// jako backstop na realne, trwałe usterki.
 void updateTempSensor() {
     float temp;
-    if (sts35_read(temp)) {
+    bool ok = false;
+    for (uint8_t attempt = 0; attempt < STS35_RETRY_COUNT && !ok; attempt++) {
+        if (attempt > 0) delay(STS35_RETRY_DELAY_MS);
+        ok = sts35_read(temp);
+    }
+
+    if (ok) {
         s_last_temp   = temp;
         s_valid       = true;
         s_fault_count = 0;
-
-        int16_t tx10 = (int16_t)(temp * 10.0f);
-        s_trend_buf[s_trend_idx] = tx10;
-        s_trend_idx = (s_trend_idx + 1) % TREND_ALARM_SAMPLES;
-        if (s_trend_idx == 0) s_trend_full = true;
     } else {
         s_fault_count++;
         if (s_fault_count >= SENSOR_FAULT_THRESHOLD) {
             s_valid = false;
-            LOG_ERROR("TempSensor: fault count=%d", s_fault_count);
+            LOG_ERROR("TempSensor: fault count=%d (cykl nieudany po %d próbach)", s_fault_count, STS35_RETRY_COUNT);
         }
     }
 }
@@ -87,14 +89,3 @@ bool    isTempValid()        { return s_valid; }
 float   getTemperature()     { return s_last_temp; }
 int16_t getTemperatureX10()  { return (int16_t)(s_last_temp * 10.0f); }
 uint8_t getSensorFaultCount(){ return s_fault_count; }
-
-bool isTrendAlarm(float delta_threshold) {
-    if (!s_trend_full) return false;  // niepełne okno 5 min — za mało danych
-
-    // s_trend_idx wskazuje slot następnego zapisu = aktualnie najstarsza próbka.
-    // Najnowsza jest w slocie tuż przed nim (bufor kołowy).
-    int16_t oldest = s_trend_buf[s_trend_idx];
-    int16_t newest = s_trend_buf[(s_trend_idx + TREND_ALARM_SAMPLES - 1) % TREND_ALARM_SAMPLES];
-    float drop = (oldest - newest) / 10.0f;  // dodatnie = spadek temperatury
-    return drop > delta_threshold;
-}

@@ -9,6 +9,7 @@
 #include "hardware/energy_meter.h"
 #include "hardware/fram_controller.h"
 #include "hardware/buzzer_controller.h"
+#include "hardware/rtc_controller.h"
 #include "config/config.h"
 #include "web_server.h"
 #include "core/logging.h"
@@ -25,11 +26,14 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/thermo-config",    HTTP_GET,  requireAuth(handleGetThermoConfig));
     server.on("/api/thermo-config",    HTTP_POST, requireAuth(handleSetThermoConfig));
     server.on("/api/mute-alarm",       HTTP_POST, requireAuth(handleMuteAlarm));
+    server.on("/api/reset-sensor-fault", HTTP_POST, requireAuth(handleResetSensorFault));
     server.on("/api/system-toggle",    HTTP_POST, requireAuth(handleSystemToggle));
     server.on("/api/energy",           HTTP_GET,  requireAuth(handleEnergy));
     server.on("/api/energy-reset-day", HTTP_POST, requireAuth(handleEnergyResetDay));
     server.on("/api/test/fan",         HTTP_POST, requireAuth(handleTestFan));
     server.on("/api/test/heater",      HTTP_POST, requireAuth(handleTestHeater));
+    server.on("/api/test/seed-history",  HTTP_POST, requireAuth(handleTestSeedHistory));
+    server.on("/api/test/clear-history", HTTP_POST, requireAuth(handleTestClearHistory));
 }
 
 void handleStatus(AsyncWebServerRequest* request) {
@@ -39,6 +43,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["heater_on"]       = isHeaterOn();
     doc["fan_pct"]         = getFanSpeedPct();
     doc["alarm_flags"]     = thermoAlgorithm.getAlarmFlags();
+    doc["sensor_fault_latched"] = thermoAlgorithm.isSensorFaultLatched();
     doc["system_disabled"] = isSystemDisabled();
     doc["energy_kwh_today"]= getEnergyKwhToday();
     String out;
@@ -112,6 +117,7 @@ void handleGetThermoConfig(AsyncWebServerRequest* request) {
     doc["alarm_delta_low"]   = cfg.alarm_delta_low;
     doc["alarm_delta_high"]  = cfg.alarm_delta_high;
     doc["trend_alarm_delta"] = cfg.trend_alarm_delta;
+    doc["trend_window_min"]  = cfg.trend_window_min;
     doc["temp_offset"]       = cfg.temp_offset;
     doc["heater_watt"]       = cfg.heater_watt;
     doc["pulses_per_kwh"]    = cfg.pulses_per_kwh;
@@ -141,6 +147,9 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     if (request->hasParam("pulses_per_kwh", true)) {
         cfg.pulses_per_kwh = (uint16_t)request->getParam("pulses_per_kwh", true)->value().toInt();
     }
+    if (request->hasParam("trend_window_min", true)) {
+        cfg.trend_window_min = (uint16_t)request->getParam("trend_window_min", true)->value().toInt();
+    }
     if (request->hasParam("fan_min_pct", true)) {
         int v = request->getParam("fan_min_pct", true)->value().toInt();
         if (v < 0) v = 0;
@@ -162,6 +171,10 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     // tonie w szumie STS35 (±0.1°C) i grozi chatteringiem.
     if (cfg.heat_hyst < MIN_HYSTERESIS_OFFSET || cfg.cool_start < MIN_HYSTERESIS_OFFSET) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"heat_hyst/cool_start must be >= 0.1\"}");
+        return;
+    }
+    if (cfg.trend_window_min < 5 || cfg.trend_alarm_delta <= 0.0f) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"trend_window_min must be >= 5, trend_alarm_delta must be > 0\"}");
         return;
     }
 
@@ -236,6 +249,61 @@ void handleTestHeater(AsyncWebServerRequest* request) {
     bool on = request->getParam("on", true)->value().toInt() != 0;
     on ? setHeaterOn() : setHeaterOff();
     LOG_INFO("Test: heater set to %s via GUI", on ? "ON" : "OFF");
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// Test: wypełnia bufory hourly/daily/alarm losowymi danymi do wglądu przy pracy
+// nad GUI (wykresy, tabele) — zanim urządzenie zbierze prawdziwą historię.
+// Zostawione w production build celowo (user, 2026-07): kod trywialny, endpoint
+// wymaga auth jak reszta /api/test/*, więc nieszkodliwy poza ręcznym wywołaniem.
+void handleTestSeedHistory(AsyncWebServerRequest* request) {
+    float target = thermoAlgorithm.getConfig().target_temp;
+    uint32_t now = (uint32_t)getUnixTimestamp();
+
+    for (int i = HOURLY_BUFFER_CAPACITY - 1; i >= 0; i--) {
+        TempAvgRecord rec;
+        rec.timestamp = now - (uint32_t)i * 3600UL;
+        rec.temp_x10  = (int16_t)((target + random(-30, 31) / 10.0f) * 10.0f);  // ±3.0°C
+        saveHourlyRecord(rec);
+    }
+
+    for (int i = DAILY_BUFFER_CAPACITY - 1; i >= 0; i--) {
+        TempAvgRecord rec;
+        rec.timestamp = now - (uint32_t)i * 86400UL;
+        rec.temp_x10  = (int16_t)((target + random(-20, 21) / 10.0f) * 10.0f);  // ±2.0°C
+        saveDailyRecord(rec);
+    }
+
+    // 15 losowych faktów wystąpienia alarmu (bez start/end, patrz AlarmEvent),
+    // rozrzuconych w ostatnich 90 dniach.
+    const uint8_t types[4] = {ALARM_EVT_LOW, ALARM_EVT_HIGH, ALARM_EVT_TREND, ALARM_EVT_SENSOR};
+    for (int i = 0; i < 15; i++) {
+        AlarmEvent ev;
+        ev.timestamp = now - (uint32_t)random(0, 90L * 86400L);
+        ev.temp_x10  = (int16_t)((target + random(-30, 31) / 10.0f) * 10.0f);
+        ev.type      = types[random(0, 4)];
+        ev._pad      = 0;
+        saveAlarmEvent(ev);
+    }
+
+    LOG_INFO("Test: seeded hourly/daily/alarm ring buffers with random demo data");
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleTestClearHistory(AsyncWebServerRequest* request) {
+    clearHourlyHistory();
+    clearDailyHistory();
+    clearAlarmEvents();
+    LOG_INFO("Test: cleared hourly/daily/alarm ring buffers");
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// Ręczne potwierdzenie awarii czujnika (SENSOR_FAULT to od 2026-07-14 alarm
+// krytyczny — latch, nie wraca sam nawet gdy czujnik znów daje poprawne
+// odczyty). Jeśli usterka faktycznie wciąż trwa, kolejny update() i tak
+// natychmiast zatrzaśnie ponownie.
+void handleResetSensorFault(AsyncWebServerRequest* request) {
+    thermoAlgorithm.resetSensorFaultLatch();
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
