@@ -10,6 +10,7 @@
 #include "hardware/fram_controller.h"
 #include "hardware/buzzer_controller.h"
 #include "hardware/rtc_controller.h"
+#include "network/wifi_manager.h"
 #include "config/config.h"
 #include "web_server.h"
 #include "core/logging.h"
@@ -34,6 +35,11 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/test/heater",      HTTP_POST, requireAuth(handleTestHeater));
     server.on("/api/test/seed-history",  HTTP_POST, requireAuth(handleTestSeedHistory));
     server.on("/api/test/clear-history", HTTP_POST, requireAuth(handleTestClearHistory));
+    server.on("/api/deviation/start",   HTTP_POST, requireAuth(handleDeviationStart));
+    server.on("/api/deviation/end",     HTTP_POST, requireAuth(handleDeviationEnd));
+    server.on("/api/deviation-reasons", HTTP_GET,  requireAuth(handleGetDeviationReasons));
+    server.on("/api/deviation-reasons", HTTP_POST, requireAuth(handleSetDeviationReasons));
+    server.on("/api/verify-pin",        HTTP_POST, requireAuth(handleVerifyPin));
 }
 
 void handleStatus(AsyncWebServerRequest* request) {
@@ -46,6 +52,18 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["sensor_fault_latched"] = thermoAlgorithm.isSensorFaultLatched();
     doc["system_disabled"] = isSystemDisabled();
     doc["energy_kwh_today"]= getEnergyKwhToday();
+    doc["wifi_connected"]  = isWiFiConnected();
+
+    // C-09 — odstępstwo od temp. zadanej. reason_idx (nie rozwiązany tekst) —
+    // frontend rozwiązuje go z /api/deviation-reasons, wczytanego raz przy
+    // starcie strony (ten sam wzorzec co sharedNotes w GUI dozownika), żeby
+    // nie czytać FRAM co 5s razem z resztą refresh().
+    const TempDeviationState& dev = thermoAlgorithm.getDeviationState();
+    doc["deviation_active"]       = (bool)dev.active;
+    doc["deviation_reason_idx"]   = dev.reason_idx;
+    doc["deviation_since"]        = dev.since_ts;
+    doc["deviation_baseline_temp"]= dev.baseline_temp;
+
     String out;
     serializeJson(doc, out);
     request->send(200, "application/json", out);
@@ -305,6 +323,104 @@ void handleTestClearHistory(AsyncWebServerRequest* request) {
 void handleResetSensorFault(AsyncWebServerRequest* request) {
     thermoAlgorithm.resetSensorFaultLatch();
     request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============================================================
+// C-09 — odstępstwo od temp. zadanej (patrz TempAlgorithm::startDeviation/
+// endDeviation, algorithm_config.h: TempDeviationState/DeviationReasonList)
+// ============================================================
+
+// Twardy zakres bezpieczeństwa dla target_temp podczas odstępstwa — akwarium
+// morskie, ochrona przed literówką (np. "2.5" zamiast "25.0").
+#define DEVIATION_TEMP_MIN 15.0f
+#define DEVIATION_TEMP_MAX 32.0f
+
+void handleDeviationStart(AsyncWebServerRequest* request) {
+    if (!request->hasParam("target_temp", true) || !request->hasParam("reason_idx", true)) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing target_temp/reason_idx\"}");
+        return;
+    }
+
+    float target = request->getParam("target_temp", true)->value().toFloat();
+    int   reasonIdx = request->getParam("reason_idx", true)->value().toInt();
+
+    if (target < DEVIATION_TEMP_MIN || target > DEVIATION_TEMP_MAX) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"target_temp out of range\"}");
+        return;
+    }
+    if (reasonIdx < 0 || reasonIdx >= DEVIATION_REASON_COUNT) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"reason_idx out of range\"}");
+        return;
+    }
+
+    DeviationReasonList reasons;
+    loadDeviationReasonsFromFRAM(reasons);
+    if (reasons.reasons[reasonIdx].text[0] == '\0') {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"reason slot is empty\"}");
+        return;
+    }
+
+    if (!thermoAlgorithm.startDeviation(target, (uint8_t)reasonIdx)) {
+        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
+        return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleDeviationEnd(AsyncWebServerRequest* request) {
+    if (!thermoAlgorithm.endDeviation()) {
+        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
+        return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleGetDeviationReasons(AsyncWebServerRequest* request) {
+    DeviationReasonList reasons;
+    loadDeviationReasonsFromFRAM(reasons);
+
+    JsonDocument doc;
+    JsonArray arr = doc["reasons"].to<JsonArray>();
+    for (int i = 0; i < DEVIATION_REASON_COUNT; i++) arr.add(reasons.reasons[i].text);
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
+void handleSetDeviationReasons(AsyncWebServerRequest* request) {
+    DeviationReasonList reasons;
+    loadDeviationReasonsFromFRAM(reasons);
+
+    char paramName[8];
+    for (int i = 0; i < DEVIATION_REASON_COUNT; i++) {
+        snprintf(paramName, sizeof(paramName), "reason%d", i);
+        if (request->hasParam(paramName, true)) {
+            String v = request->getParam(paramName, true)->value();
+            strncpy(reasons.reasons[i].text, v.c_str(), sizeof(reasons.reasons[i].text) - 1);
+            reasons.reasons[i].text[sizeof(reasons.reasons[i].text) - 1] = '\0';
+        }
+    }
+
+    if (!saveDeviationReasonsToFRAM(reasons)) {
+        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
+        return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// Lock-PIN edycji GUI — osobny od hasła logowania (drugi zamek NA edycję,
+// wymaga już istniejącej sesji, nie jest zamiennikiem loginu).
+void handleVerifyPin(AsyncWebServerRequest* request) {
+    if (!request->hasParam("pin", true)) {
+        request->send(400, "application/json", "{\"success\":false}");
+        return;
+    }
+    String pin = request->getParam("pin", true)->value();
+
+    LockPin lp;
+    loadLockPinFromFRAM(lp);
+    bool match = (strncmp(pin.c_str(), lp.pin, sizeof(lp.pin)) == 0);
+    request->send(200, "application/json", match ? "{\"success\":true}" : "{\"success\":false}");
 }
 
 // ============================================================
