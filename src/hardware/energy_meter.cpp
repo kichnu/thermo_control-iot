@@ -1,6 +1,7 @@
 #include "energy_meter.h"
 #include "hardware_pins.h"
 #include "hardware/fram_controller.h"
+#include "hardware/rtc_controller.h"
 #include "core/logging.h"
 
 static volatile uint32_t s_pulse_count    = 0;
@@ -9,6 +10,7 @@ static uint16_t          s_pulses_per_kwh = 1000;
 static uint32_t          s_last_pulse_ms  = 0;
 static uint32_t          s_prev_pulse_ms  = 0;
 static uint32_t          s_last_saved_count = 0;  // do progu zapisu co N impulsów
+static uint32_t          s_reset_ts       = 0;    // Unix UTC ostatniego kasowania licznika total
 
 static const uint32_t ENERGY_SAVE_EVERY_N_PULSES = 10;
 
@@ -69,23 +71,44 @@ void energyResetDayCounter() {
     energySaveToFRAM();
 }
 
+uint32_t getEnergyResetTimestamp() { return s_reset_ts; }
+
+void energyResetTotalCounter() {
+    noInterrupts(); s_pulse_count = 0; interrupts();
+    s_day_start = 0;
+    s_reset_ts  = (uint32_t)getUnixTimestamp();
+    energySaveToFRAM();
+
+    EnergyResetInfo rinfo;
+    rinfo.reset_ts   = s_reset_ts;
+    rinfo._reserved  = 0;
+    rinfo.checksum   = 0;  // przeliczane wewnątrz saveEnergyResetInfoToFRAM()
+    saveEnergyResetInfoToFRAM(rinfo);
+
+    LOG_INFO("EnergyMeter: total counter reset, reset_ts=%u", s_reset_ts);
+}
+
 void energyLoadFromFRAM() {
     EnergyStore store;
     if (!loadEnergyStoreFromFRAM(store)) {
         LOG_WARNING("EnergyStore not found/invalid in FRAM — starting from 0");
         s_last_saved_count = 0;
-        return;
+    } else {
+        noInterrupts();
+        s_pulse_count = store.total_pulses;
+        interrupts();
+        s_day_start = store.day_start_pulses;
+        if (store.pulses_per_kwh > 0) s_pulses_per_kwh = store.pulses_per_kwh;
+        s_last_saved_count = store.total_pulses;
+
+        LOG_INFO("EnergyStore loaded from FRAM: total_pulses=%u day_start=%u ppkwh=%u",
+                 store.total_pulses, store.day_start_pulses, s_pulses_per_kwh);
     }
 
-    noInterrupts();
-    s_pulse_count = store.total_pulses;
-    interrupts();
-    s_day_start = store.day_start_pulses;
-    if (store.pulses_per_kwh > 0) s_pulses_per_kwh = store.pulses_per_kwh;
-    s_last_saved_count = store.total_pulses;
-
-    LOG_INFO("EnergyStore loaded from FRAM: total_pulses=%u day_start=%u ppkwh=%u",
-             store.total_pulses, store.day_start_pulses, s_pulses_per_kwh);
+    EnergyResetInfo rinfo;
+    if (loadEnergyResetInfoFromFRAM(rinfo)) {
+        s_reset_ts = rinfo.reset_ts;
+    }
 }
 
 void energySaveToFRAM() {

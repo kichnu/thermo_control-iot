@@ -31,6 +31,7 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/system-toggle",    HTTP_POST, requireAuth(handleSystemToggle));
     server.on("/api/energy",           HTTP_GET,  requireAuth(handleEnergy));
     server.on("/api/energy-reset-day", HTTP_POST, requireAuth(handleEnergyResetDay));
+    server.on("/api/energy-reset-total", HTTP_POST, requireAuth(handleEnergyResetTotal));
     server.on("/api/test/fan",         HTTP_POST, requireAuth(handleTestFan));
     server.on("/api/test/heater",      HTTP_POST, requireAuth(handleTestHeater));
     server.on("/api/test/seed-history",  HTTP_POST, requireAuth(handleTestSeedHistory));
@@ -230,6 +231,7 @@ void handleEnergy(AsyncWebServerRequest* request) {
     doc["today_kwh"]   = getEnergyKwhToday();
     doc["pulse_count"] = getEnergyPulseCount();
     doc["power_w"]     = getPowerWatt();
+    doc["reset_ts"]    = getEnergyResetTimestamp();
     String out;
     serializeJson(doc, out);
     request->send(200, "application/json", out);
@@ -237,6 +239,14 @@ void handleEnergy(AsyncWebServerRequest* request) {
 
 void handleEnergyResetDay(AsyncWebServerRequest* request) {
     energyResetDayCounter();
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+// Kasowanie licznika total — nieodwracalne, dlatego przycisk w GUI ma klasę
+// .lockable-btn (wymaga wcześniejszego odblokowania PIN-em, ten sam mechanizm
+// co Save w Algorithm Settings, patrz gui_design_system_thermo).
+void handleEnergyResetTotal(AsyncWebServerRequest* request) {
+    energyResetTotalCounter();
     request->send(200, "application/json", "{\"ok\":true}");
 }
 

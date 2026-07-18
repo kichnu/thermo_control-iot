@@ -61,7 +61,18 @@
 #define FRAM_ADDR_ALARM_BUFFER      0x1230
 #define ALARM_RECORD_SIZE           8       // sizeof(AlarmEvent)
 
-// 0x1B90–0x1FFF: wolne (1136B rezerwa)
+// 0x1B90–0x1CA1: C-09 (odstępstwo od temp. zadanej) + lock-PIN edycji GUI
+// (2026-07-15) — patrz LockPin/TempDeviationState/DeviationReasonList w
+// algorithm_config.h. Reszta wolnego bloku (~862B) zostaje rezerwą.
+#define FRAM_ADDR_LOCK_PIN           0x1B90  // LockPin (12B)
+#define FRAM_ADDR_DEVIATION_STATE    0x1BA0  // TempDeviationState (12B)
+#define FRAM_ADDR_DEVIATION_REASONS  0x1BB0  // DeviationReasonList (242B)
+
+// 0x1CA2–0x1CA9: EnergyResetInfo (8B) — timestamp kasowania licznika total
+// (2026-07-18), osobno od EnergyStore (0x052E) żeby nie przesuwać layoutu
+#define FRAM_ADDR_ENERGY_RESET        0x1CA2  // EnergyResetInfo (8B)
+
+// 0x1CAA–0x1FFF: wolne (~854B rezerwa)
 
 // ============================================================
 // ENCRYPTION (credentials — bez zmian z ATO)

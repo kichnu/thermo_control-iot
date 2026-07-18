@@ -42,6 +42,14 @@ ValidationResult prov_validateWiFiPassword(const String& password);
 ValidationResult prov_validateAdminPassword(const String& password);
 
 /**
+ * Validate dashboard lock-PIN for provisioning (optional — empty = keep
+ * current/default "1234", not touched by prov_validateAllCredentials)
+ * Pattern: 4-7 numeric digits (7, not 8, to leave room for the null
+ * terminator in the fixed LockPin.pin[8] FRAM field)
+ */
+ValidationResult prov_validateLockPin(const String& pin);
+
+/**
  * Validate all credentials at once (passwords optional — empty = keep existing)
  * Returns first validation error found
  */

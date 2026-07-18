@@ -13,6 +13,7 @@ TempAlgorithm thermoAlgorithm;
 
 void TempAlgorithm::begin() {
     loadConfig();        // stosuje defaults wewnętrznie, jeśli FRAM pusty/niepoprawny
+    loadDeviationStateFromFRAM(_deviation);  // złą checksumę/świeży FRAM już zwraca active=0
     LOG_INFO("TempAlgorithm: init, target=%.1f heat_hyst=%.1f",
              _config.target_temp, _config.heat_hyst);
 }
@@ -305,7 +306,45 @@ bool TempAlgorithm::saveConfig() {
 
 bool TempAlgorithm::setConfig(const ThermoConfig& cfg) {
     _config = cfg;
-    return saveConfig();
+    bool ok = saveConfig();
+    if (_deviation.active) {
+        // Bezpośrednia edycja z ukrytego panelu podczas aktywnego odstępstwa —
+        // to nowa normalność, nie kontynuacja starego baseline (user, 2026-07-15).
+        _deviation.active = 0;
+        saveDeviationStateToFRAM(_deviation);
+    }
+    return ok;
+}
+
+bool TempAlgorithm::startDeviation(float newTargetTemp, uint8_t reasonIdx) {
+    if (!_deviation.active) {
+        // Snapshot TYLKO przy przejściu false→true, żeby seryjne zmiany
+        // 25→26→24 zawsze wracały do prawdziwego baseline, nie do ostatniego
+        // odstępstwa.
+        _deviation.baseline_temp = _config.target_temp;
+    }
+    _config.target_temp = newTargetTemp;
+    bool ok = saveConfig();  // NIE setConfig() — nie wolno samo-skasować odstępstwa
+
+    _deviation.since_ts  = (uint32_t)getUnixTimestamp();
+    _deviation.reason_idx = reasonIdx;
+    _deviation.active    = 1;
+    ok = saveDeviationStateToFRAM(_deviation) && ok;
+
+    LOG_INFO("Deviation started: target=%.1f (baseline=%.1f) reason_idx=%u",
+             _config.target_temp, _deviation.baseline_temp, reasonIdx);
+    return ok;
+}
+
+bool TempAlgorithm::endDeviation() {
+    _config.target_temp = _deviation.baseline_temp;
+    bool ok = saveConfig();  // NIE setConfig()
+
+    _deviation.active = 0;
+    ok = saveDeviationStateToFRAM(_deviation) && ok;
+
+    LOG_INFO("Deviation ended: target restored to %.1f", _config.target_temp);
+    return ok;
 }
 
 void TempAlgorithm::muteActiveAlarms() {

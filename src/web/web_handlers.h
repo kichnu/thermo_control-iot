@@ -21,6 +21,7 @@
 //   POST /api/system-toggle
 //   GET  /api/energy
 //   POST /api/energy-reset-day
+//   POST /api/energy-reset-total  (kasowanie licznika total — gating PIN po stronie GUI, .lockable-btn)
 //
 // C-09 — odstępstwo od temp. zadanej + lock-PIN edycji GUI (2026-07-15):
 //   POST /api/deviation/start   (target_temp, reason_idx)
@@ -45,6 +46,7 @@ void handleResetSensorFault(AsyncWebServerRequest* request);
 void handleSystemToggle(AsyncWebServerRequest* request);
 void handleEnergy(AsyncWebServerRequest* request);
 void handleEnergyResetDay(AsyncWebServerRequest* request);
+void handleEnergyResetTotal(AsyncWebServerRequest* request);
 
 // Test: ręczne sterowanie wentylatorem z GUI (bypass algorytmu) — POST pct=0-100
 void handleTestFan(AsyncWebServerRequest* request);

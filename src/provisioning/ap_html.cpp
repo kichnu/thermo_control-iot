@@ -330,16 +330,17 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                     <span class="error" id="admin_password_error">Password must be at least 8 characters</span>
                 </div>
 
-                <!-- Algorithm Settings -->
+                <!-- Dashboard Settings -->
                 <hr style="margin: 24px 0 20px; border: none; border-top: 1px solid #eee;">
-                <p style="color: #888; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px;">Algorithm Settings</p>
+                <p style="color: #888; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px;">Dashboard Settings</p>
 
                 <div class="form-group">
-                    <label for="ema_alpha">EMA Smoothing Factor</label>
-                    <input type="number" id="ema_alpha" name="ema_alpha"
-                           value="0.20" min="0.05" max="0.50" step="0.01">
-                    <small>0.05 = slow tracking / 0.50 = fast tracking. Default: 0.20</small>
-                    <span class="error">Must be 0.05 – 0.50</span>
+                    <label for="lock_pin">Settings Lock PIN</label>
+                    <input type="password" id="lock_pin" name="lock_pin"
+                           placeholder="leave blank to keep current"
+                           inputmode="numeric" pattern="[0-9]*" maxlength="7">
+                    <small id="lock_pin_hint">Leave blank to keep current. 4-7 digits, numeric only. Default: 1234.</small>
+                    <span class="error" id="lock_pin_error">PIN must be 4-7 digits</span>
                 </div>
 
                 <button type="submit" class="btn" id="submitBtn">
@@ -483,7 +484,8 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 const r = await fetch('/api/prov/config');
                 const d = await r.json();
                 if (d.device_name) document.getElementById('device_name').value = d.device_name;
-                document.getElementById('ema_alpha').value = d.ema_alpha ?? 0.20;
+                // lock_pin celowo nigdy nie jest wypełniany z serwera (sekret, jak hasła) —
+                // puste pole = zachowaj bieżący/domyślny PIN.
 
                 if (!d.is_configured) {
                     // First-time setup — passwords required
@@ -517,7 +519,7 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 wifi_ssid:     document.getElementById('wifi_ssid').value,
                 wifi_password: document.getElementById('wifi_password').value,
                 admin_password:document.getElementById('admin_password').value,
-                ema_alpha:     parseFloat(document.getElementById('ema_alpha').value)
+                lock_pin:      document.getElementById('lock_pin').value
             };
 
             // Validate
@@ -557,9 +559,9 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 hasErrors = true;
             }
 
-            // EMA alpha
-            if (isNaN(formData.ema_alpha) || formData.ema_alpha < 0.05 || formData.ema_alpha > 0.50) {
-                document.getElementById('ema_alpha').parentElement.classList.add('has-error');
+            // Lock PIN (optional — blank = keep current/default)
+            if (formData.lock_pin.length > 0 && !/^[0-9]{4,7}$/.test(formData.lock_pin)) {
+                document.getElementById('lock_pin').parentElement.classList.add('has-error');
                 hasErrors = true;
             }
 

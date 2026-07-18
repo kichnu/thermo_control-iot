@@ -30,6 +30,11 @@
 #define DEFAULT_COOL_START          0.3f    // fan ON powyżej T + X, OFF przy T
 #define DEFAULT_COOL_FULL           1.0f    // fan 100% powyżej T + X
 #define DEFAULT_FAN_MIN_PCT         30      // floor rampy fana (poniżej fan się nie rusza / jest nieefektywny)
+
+// Przycisk "Fan ON" w GUI (test manualny, karta System Control) — jaki % ma
+// ustawić jednym kliknięciem. Mirror tej wartości jest w JS (html_pages.cpp,
+// FAN_MANUAL_DEFAULT_PCT) — brak mechanizmu wstrzykiwania #define do PROGMEM.
+#define FAN_MANUAL_DEFAULT_PCT      50
 #define DEFAULT_ALARM_DELTA_LOW     2.0f    // ALARM poniżej T - X
 #define DEFAULT_ALARM_DELTA_HIGH    1.5f    // ALARM powyżej T + X
 // Trend: grzałka ON od co najmniej trend_window_min minut, a temperatura nie
@@ -143,5 +148,73 @@ struct EnergyStore {
     uint16_t checksum;
 };
 static_assert(sizeof(EnergyStore) == 12, "EnergyStore must be 12 bytes"); // 2×u32 + 2×u16 = 12B, checksum wbudowany (pre-existing assert błędnie mówił 16)
+
+// Timestamp ostatniego skasowania licznika total (przycisk + PIN w GUI).
+// Osobny struct/adres od EnergyStore, żeby nie przesuwać jego istniejącego
+// layoutu w FRAM — patrz FRAM_ADDR_ENERGY_RESET (wolny blok za lock-PIN).
+// Zero jest poprawnym defaultem ("nigdy nie kasowany"), więc — inaczej niż
+// LockPin — magic byte nie jest tu potrzebny (patrz [[fram_magic_byte_gotcha]]).
+struct EnergyResetInfo {
+    uint32_t reset_ts;   // Unix UTC ostatniego resetu total_pulses (0 = nigdy)
+    uint16_t _reserved;
+    uint16_t checksum;
+};
+static_assert(sizeof(EnergyResetInfo) == 8, "EnergyResetInfo must be 8 bytes");
+
+// ============================================================
+// C-09 — odstępstwo od temperatury zadanej (2026-07-15)
+// Mechanizm PRZESUWA realnie ThermoConfig.target_temp (algorytm nie zyskuje
+// żadnej nowej logiki — heater/fan/alarmy dalej liczą względem target_temp
+// jak dziś). Stan trwałości (aktywne/nie, powód, od kiedy, baseline do
+// powrotu) persystowany osobno w FRAM, bo może trwać dniami — restart nie
+// może cichcem go skasować. Powód wybierany z edytowalnej listy (user sam
+// wypełnia sloty), nie sztywny enum. Bezpośrednia edycja target_temp przez
+// ukryty panel ThermoConfig (TempAlgorithm::setConfig()) kończy aktywne
+// odstępstwo — traktowana jako nowa normalność, nie kontynuacja starego
+// baseline.
+// ============================================================
+#define DEVIATION_REASON_COUNT  8
+
+struct TempDeviationState {
+    float    baseline_temp;  // target_temp sprzed odstępstwa — cel endDeviation()
+    uint32_t since_ts;       // Unix UTC startu odstępstwa
+    uint8_t  reason_idx;     // index w DeviationReasonList (0..DEVIATION_REASON_COUNT-1)
+    uint8_t  active;         // 0/1
+    uint16_t checksum;
+};
+static_assert(sizeof(TempDeviationState) == 12, "TempDeviationState must be 12 bytes");
+
+struct DeviationReasonEntry {
+    char text[30];  // pusty string = slot nieużywany
+};
+
+struct DeviationReasonList {
+    DeviationReasonEntry reasons[DEVIATION_REASON_COUNT];
+    uint16_t checksum;
+};
+static_assert(sizeof(DeviationReasonList) == 242, "DeviationReasonList must be 242 bytes");
+
+// ============================================================
+// LOCK PIN — blokada edycji GUI (osobna od hasła logowania), 2026-07-15.
+// Chroni zapisy (config/odstępstwo/lista powodów/czyszczenie historii), NIE
+// kartę "System" ani ręczne sterowanie w Service Mode — te zostają zawsze
+// dostępne. Lazy-init do "1234" przy pierwszym odczycie świeżego FRAM.
+//
+// magic (LOCK_PIN_MAGIC) jest konieczny OBOK checksumu: calculateChecksum()
+// to zwykła suma bajtów — świeże/nigdy niezapisane FRAM czyta się jako same
+// zera, a suma samych zer to też 0, więc sam checksum "poprawnie" waliduje
+// pusty PIN jako rzekomo zapisany stan (nie do odblokowania, bo GUI blokuje
+// wysłanie pustego PIN-u). magic odróżnia to jednoznacznie, tak jak
+// is_configured/THERMO_CONFIG_MAGIC przy ThermoConfig.
+// ============================================================
+#define LOCK_PIN_MAGIC 0x7A
+
+struct LockPin {
+    char     pin[8];       // numeryczny PIN, null-terminated
+    uint8_t  magic;        // LOCK_PIN_MAGIC = ważny zapis
+    uint8_t  _reserved;
+    uint16_t checksum;
+};
+static_assert(sizeof(LockPin) == 12, "LockPin must be 12 bytes");
 
 #endif // ALGORITHM_CONFIG_H

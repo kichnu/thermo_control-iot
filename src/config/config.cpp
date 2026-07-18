@@ -11,7 +11,7 @@ const IPAddress TRUSTED_PROXY_IP(10, 99, 0, 1);
 
 // ============== SYSTEM DISABLE/ENABLE ==============
 
-bool systemDisabled = true;  // boot w trybie serwisowym, auto-enable po SYSTEM_AUTO_ENABLE_MS
+bool systemDisabled = false;  // boot zawsze w trybie normalnym — Service Mode tylko z GUI
 static unsigned long s_system_disabled_ms = 0;
 
 void setSystemState(bool enabled) {
@@ -46,5 +46,4 @@ void initSystemFRAM() {
     } else {
         LOG_INFO("FRAM ready (SPI)");
     }
-    s_system_disabled_ms = millis();  // start auto-enable timer
 }

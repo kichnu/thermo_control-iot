@@ -1,8 +1,5 @@
 #include "html_pages.h"
 
-// TODO: Etap 5b — wykresy Chart.js zamiast tabel hourly/daily/alarm (poza
-// zakresem rundy C-09/lock/modale/panel ustawień, 2026-07-15)
-
 static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -81,6 +78,34 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   .status-main-wifi.wifi-off .wifi-dot { color:var(--text-muted); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
+  /* Karta Energy — wzorzec wielkości z .temp (System Status), ale bez
+     obramowanego boxa (--text-secondary zamiast --accent-blue, brak
+     .status-main). Reset+timestamp we wspólnym rodzicu (.energy-reset-group),
+     żeby na mobile poprawnie wylądowały POD licznikiem (column), a na
+     desktopie po prawej (row, patrz .energy-row). */
+  .energy-row { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .energy-total { font-size:1.5em; color:var(--text-secondary); font-weight:300; }
+  .energy-total-value>span { font-size:2.5em; }
+  /* Heartbeat: krótki flash przy przeskoczeniu o kolejne 0.01 kWh (patrz
+     refresh() — porównanie zaokrąglonego stringa, nie samego pollingu 5s). */
+  @keyframes energy-tick { 0%{ color:var(--accent-yellow); } 100%{ color:inherit; } }
+  .energy-total-value.energy-tick>span { animation:energy-tick .8s ease; }
+
+  .energy-reset-group { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+  .energy-reset-info { font-size:var(--font-sm); color:var(--text-secondary); text-align:right; }
+  .energy-reset-info b { color:var(--text-primary); font-family:'Courier New',monospace; }
+  @media (max-width:600px) {
+    .energy-row { flex-direction:column; align-items:stretch; }
+    /* Label i wartość+jednostka w osobnych spanach (.energy-total-label/-value)
+       specjalnie po to, żeby wymusić podział na dwie linie TYLKO na mobile —
+       na desktopie oba zostają inline w jednym wierszu (bez zmian). */
+    .energy-total-label, .energy-total-value { display:block; }
+    .energy-total-value>span { font-size:2em; }
+    .energy-reset-group { align-items:stretch; }
+    .energy-reset-group button { width:100%; }
+    .energy-reset-info { text-align:center; }
+  }
+
   .btn-service { background:var(--service-bg); border-color:var(--service-border); color:var(--service-text); }
   .btn-service:hover { background:var(--service-bg-hover); border-color:var(--service-border); }
   .badge { display:inline-block; padding:4px 10px; border-radius:12px; font-size:.85em; font-weight:600; border:1px solid transparent; }
@@ -118,7 +143,35 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   }
   table { border-collapse: collapse; width:100%; font-size:var(--font-sm); }
   th, td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--border); color:var(--text-secondary); }
-  #err_thermo, .err-text { color:var(--accent-red); font-size:var(--font-sm); }
+  .err-text { color:var(--accent-red); font-size:var(--font-sm); }
+
+  /* Wykresy temperatury (hourly + daily), portowane z chart_prototype/daily_alarms.html
+     (2026-07-17) — jedna karta, dwa niezależne wykresy (godzinowy/dobowy), ręczne
+     odświeżanie przyciskiem (bez pollingu, patrz loadCharts()). */
+  .chart-sub-title { color:var(--text-secondary); font-size:var(--font-sm); font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:16px 0 10px; }
+  .chart-sub-title:first-of-type { margin-top:0; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:var(--font-xs); color:var(--text-muted); margin-bottom:10px; }
+  .legend span.dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .chart-body { display:flex; align-items:stretch; gap:0; }
+  .chart-nav-btn { flex-shrink:0; width:32px; border:1px solid var(--border); background:var(--bg-input); color:var(--text-secondary); cursor:pointer; font-size:1rem; border-radius:var(--radius-sm); transition:all var(--transition-fast); margin:0; padding:0; }
+  .chart-nav-btn:hover { border-color:var(--accent-cyan); color:var(--text-primary); }
+  .chart-nav-btn:disabled { opacity:.3; cursor:not-allowed; }
+  .chart-nav-btn:disabled:hover { border-color:var(--border); color:var(--text-secondary); }
+  @media (max-width:600px) { .chart-nav-btn { display:none; } }
+  .chart-yaxis { flex-shrink:0; width:42px; position:relative; margin:0 6px 0 0; }
+  .chart-yaxis .tick { position:absolute; left:0; transform:translateY(-50%); font-size:var(--font-xs); color:var(--text-muted); white-space:nowrap; }
+  .chart-yaxis .target-tick { color:var(--accent-blue); font-weight:600; }
+  .chart-scroll { flex:1; min-width:0; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; touch-action:pan-x; scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+  .chart-scroll::-webkit-scrollbar { height:6px; }
+  .chart-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  .chart-inner { position:relative; }
+  .plot-svg { display:block; }
+  .chart-labels { display:flex; }
+  .chart-label { display:flex; align-items:flex-start; justify-content:center; flex-shrink:0; }
+  .chart-label span { display:inline-block; transform:rotate(-90deg); white-space:nowrap; font-size:.7rem; color:var(--text-muted); font-family:'Courier New',monospace; margin-top:8px; }
+  .chart-label.now span { color:var(--accent-cyan); font-weight:700; }
+  .now-marker { stroke:var(--accent-cyan); stroke-width:1; stroke-dasharray:3 3; opacity:.6; }
+  .target-marker { stroke:var(--accent-blue); stroke-width:1; stroke-dasharray:5 3; opacity:.55; }
 
   /* Topbar + lock */
   .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
@@ -251,8 +304,19 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </div>
 
 <div class="card">
-  <b>Energia:</b> dziś: <span id="energy_today">0.000</span> kWh
-  &nbsp;|&nbsp; moc: <span id="power">0</span> W
+  <div class="card-header">
+    <div class="card-header-icon" style="background:rgba(234,179,8,0.15);">
+      <svg fill="currentColor" style="color:var(--accent-yellow);" viewBox="0 0 24 24"><path d="M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66C8.48 10.94 10.42 7.54 13.01 3h1l-1 7h3.51c.4 0 .58.19.36.66C13.94 15.35 11 21 11 21z"/></svg>
+    </div>
+    <h2>Energy</h2>
+  </div>
+  <div class="energy-row">
+    <div class="energy-total"><span class="energy-total-label">Total Energy:</span> <span class="energy-total-value"><span id="energy_total">00.00</span> kWh</span></div>
+    <div class="energy-reset-group">
+      <button class="lockable-btn" id="btnEnergyReset">Reset Total Counter</button>
+      <div class="energy-reset-info">Last Reset: <b id="energyResetTs">never</b></div>
+    </div>
+  </div>
 </div>
 
 <!-- Druga karta: SYSTEM CONTROL — te same elementy graficzne co System Status.
@@ -333,7 +397,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
     <label class="settings-field">Heater power [W]<input type="number" step="1" id="heater_watt"></label>
     <label class="settings-field">Pulses / kWh (energy meter)<input type="number" step="1" id="pulses_per_kwh"></label>
   </div>
-  <div id="err_thermo"></div>
   <div class="btn-row" style="margin-top:10px;">
     <button class="lockable-btn primary" id="btnSaveThermo">Save</button>
     <button type="button" onclick="toggleAlgSettings()">Cancel</button>
@@ -341,31 +404,46 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
 </div>
 
 <div class="card">
-  <h2>Hourly History (rolling 24h, newest first)</h2>
-  <button id="btnLoadHourly">Refresh</button>
-  <table>
-    <thead><tr><th>Hour</th><th>Avg. temp</th></tr></thead>
-    <tbody id="hourlyBody"></tbody>
-  </table>
-</div>
+  <div class="card-header">
+    <div class="card-header-icon" style="background:rgba(56,189,248,0.15);">
+      <svg fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-blue);" viewBox="0 0 24 24"><polyline points="3,17 9,11 13,15 21,7"/><polyline points="15,7 21,7 21,13"/></svg>
+    </div>
+    <h2>Temperature History</h2>
+    <div class="legend" id="chartLegend" style="margin-left:auto; margin-bottom:0;">
+      <span><span class="dot" style="background:var(--accent-blue);"></span>LOW</span>
+      <span><span class="dot" style="background:var(--accent-red);"></span>HIGH</span>
+      <span><span class="dot" style="background:var(--accent-yellow);"></span>TREND</span>
+      <span><span class="dot" style="background:var(--accent-red); width:14px; height:14px;"></span>SENSOR</span>
+    </div>
+  </div>
 
-<div class="card">
-  <h2>Daily History (~1 year, newest first)</h2>
-  <button id="btnLoadDaily">Refresh</button>
-  <table>
-    <thead><tr><th>Date</th><th>Avg. temp</th></tr></thead>
-    <tbody id="dailyBody"></tbody>
-  </table>
-</div>
+  <div class="chart-sub-title">Hourly (rolling 24h)</div>
+  <div class="chart-body">
+    <button class="chart-nav-btn" id="prevBtnHourly" title="Older">&#9664;</button>
+    <div class="chart-yaxis" id="yAxisHourly"></div>
+    <div class="chart-scroll" id="scrollHourly">
+      <div class="chart-inner" id="innerHourly">
+        <svg class="plot-svg" id="svgHourly"></svg>
+        <div class="chart-labels" id="labelsHourly"></div>
+      </div>
+    </div>
+    <button class="chart-nav-btn" id="nextBtnHourly" title="Newer">&#9654;</button>
+  </div>
 
-<div class="card">
-  <h2>Alarm Events (occurrence log, newest first)</h2>
-  <button id="btnLoadAlarms">Refresh</button>
-  <div id="alarmSummary" style="margin:8px 0; font-size:.9em; color:var(--text-secondary);"></div>
-  <table>
-    <thead><tr><th>Time</th><th>Temp</th><th>Event</th></tr></thead>
-    <tbody id="alarmEventsBody"></tbody>
-  </table>
+  <div class="chart-sub-title">Daily (~1 year)</div>
+  <div class="chart-body">
+    <button class="chart-nav-btn" id="prevBtnDaily" title="Older">&#9664;</button>
+    <div class="chart-yaxis" id="yAxisDaily"></div>
+    <div class="chart-scroll" id="scrollDaily">
+      <div class="chart-inner" id="innerDaily">
+        <svg class="plot-svg" id="svgDaily"></svg>
+        <div class="chart-labels" id="labelsDaily"></div>
+      </div>
+    </div>
+    <button class="chart-nav-btn" id="nextBtnDaily" title="Newer">&#9654;</button>
+  </div>
+
+  <button id="btnLoadCharts" style="margin-top:14px;">Refresh Charts</button>
 </div>
 
 <div class="modal-overlay" id="alertModal">
@@ -394,8 +472,13 @@ const MODAL_ICONS = {
   info: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
 };
 let alertCallback = null;
+let alertAutoHideTimer = null;
+const ALERT_AUTO_HIDE_MS = 1500;
 
+// Auto-hide tylko dla showAlert (czysto informacyjny modal) — showConfirm
+// wymaga jawnej decyzji (Confirm/Cancel), więc nigdy nie znika sam.
 function showAlert(title, msg, type) {
+  clearTimeout(alertAutoHideTimer);
   document.getElementById('alertIcon').className = 'modal-icon ' + type;
   document.getElementById('alertIcon').innerHTML = MODAL_ICONS[type] || MODAL_ICONS.info;
   document.getElementById('alertTitle').textContent = title;
@@ -403,8 +486,10 @@ function showAlert(title, msg, type) {
   alertCallback = null;
   document.getElementById('alertActions').innerHTML = '<button onclick="closeAlert()">OK</button>';
   document.getElementById('alertModal').classList.add('show');
+  alertAutoHideTimer = setTimeout(closeAlert, ALERT_AUTO_HIDE_MS);
 }
 function showConfirm(title, msg, type, onConfirm) {
+  clearTimeout(alertAutoHideTimer);
   document.getElementById('alertIcon').className = 'modal-icon ' + type;
   document.getElementById('alertIcon').innerHTML = MODAL_ICONS[type] || MODAL_ICONS.info;
   document.getElementById('alertTitle').textContent = title;
@@ -415,6 +500,7 @@ function showConfirm(title, msg, type, onConfirm) {
   document.getElementById('alertModal').classList.add('show');
 }
 function closeAlert(confirmed) {
+  clearTimeout(alertAutoHideTimer);
   document.getElementById('alertModal').classList.remove('show');
   if (confirmed && alertCallback) alertCallback();
   alertCallback = null;
@@ -506,6 +592,7 @@ let currentFanOn = false;
 let serviceModeActive = false;
 let deviationIsActive = false;
 let devTargetTemp = 0;
+let lastEnergyKwhStr = null;
 
 async function refresh() {
   try {
@@ -596,9 +683,31 @@ async function refresh() {
 
     const e = await fetch('api/energy');
     const en = await e.json();
-    document.getElementById('energy_today').textContent = en.today_kwh.toFixed(3);
-    document.getElementById('power').textContent = en.power_w.toFixed(0);
+    const kwhStr = en.total_kwh.toFixed(2);
+    const totalEl = document.getElementById('energy_total');
+    // "Heartbeat": pulsujący flash TYLKO gdy zaokrąglona wartość faktycznie
+    // przeskoczyła o kolejne 0.01 kWh (nie na każdym pollu co 5s) — daje
+    // wizualne potwierdzenie zliczenia impulsów, jak mrugająca dioda licznika.
+    if (lastEnergyKwhStr !== null && kwhStr !== lastEnergyKwhStr) {
+      const valueEl = totalEl.closest('.energy-total-value');
+      valueEl.classList.remove('energy-tick');
+      void valueEl.offsetWidth; // restart animacji, gdyby poprzednia jeszcze trwała
+      valueEl.classList.add('energy-tick');
+    }
+    lastEnergyKwhStr = kwhStr;
+    totalEl.textContent = kwhStr;
+    document.getElementById('energyResetTs').textContent = formatResetTs(en.reset_ts);
   } catch(err) { console.error(err); }
+}
+
+// Kasowanie licznika: godzina/dzień/miesiąc/rok, świadomie bez minut/sekund.
+function formatResetTs(ts) {
+  if (!ts) return 'never';
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${hh}h · ${dd}.${mm}.${d.getFullYear()}`;
 }
 
 async function loadThermoConfig() {
@@ -738,43 +847,205 @@ async function endDeviation() {
   refresh(); loadThermoConfig();
 }
 
-async function loadAvgHistory(endpoint, tbodyId) {
-  const r = await fetch(endpoint);
-  const d = await r.json();
-  const tbody = document.getElementById(tbodyId);
-  tbody.innerHTML = '';
-  for (const rec of d.records) {
-    const tr = document.createElement('tr');
-    const time = new Date(rec.ts * 1000).toLocaleString();
-    tr.innerHTML = `<td>${time}</td><td>${rec.temp_c.toFixed(1)}°C</td>`;
-    tbody.appendChild(tr);
-  }
+// ── Wykresy temperatury: hourly + daily w jednej karcie (portowane z
+// chart_prototype/daily_alarms.html, 2026-07-17). Ręczne odświeżanie
+// przyciskiem "Refresh Charts" — bez pollingu, tak jak wcześniej tabele
+// hourly/daily/alarm-events, które ładowały się raz przy starcie strony.
+const ALARM_COLOR_VARS = { 0:'--accent-blue', 1:'--accent-red', 2:'--accent-yellow', 3:'--accent-red' };
+// Priorytet widoczności, gdy w jednym buckecie jest kilka typów alarmów naraz —
+// rysowany jest tylko punkt typu o najwyższym priorytecie: LOW=HIGH < TREND < SENSOR.
+const ALARM_PRIORITY = { 0:1, 1:1, 2:2, 3:3 };
+const CHART_PLOT_HEIGHT = 170, CHART_LABEL_ROW_H = 48, CHART_PLOT_PAD_Y = 18;
+const CHART_ALARM_R = 5, CHART_ALARM_R_SENSOR = 7;
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// Ticki osi Y zaokrąglone w górę do pełnych stopni (1/2/5/10...), żeby
+// etykiety były całkowite i równo rozłożone zamiast np. 28.6°C / 26.8°C.
+function computeChartTicks(minRaw, maxRaw) {
+  const pad = Math.max(0.5, (maxRaw - minRaw) * 0.15);
+  let min = Math.floor(minRaw - pad);
+  let max = Math.ceil(maxRaw + pad);
+  if (max <= min) max = min + 1;
+  const TARGET_TICK_COUNT = 5;
+  const niceSteps = [1, 2, 5, 10, 20, 25, 50, 100];
+  const rawStep = (max - min) / (TARGET_TICK_COUNT - 1);
+  const step = niceSteps.find(s => s >= rawStep) || Math.ceil(rawStep / 50) * 50;
+  max = min + Math.ceil((max - min) / step) * step;
+  const ticks = [];
+  for (let v = min; v <= max; v += step) ticks.push(v);
+  return { min, max, ticks };
 }
-const loadHourly = () => loadAvgHistory('api/history-hourly', 'hourlyBody');
-const loadDaily  = () => loadAvgHistory('api/history-daily', 'dailyBody');
 
-async function loadAlarmEvents() {
-  const r = await fetch('api/alarm-events');
-  const d = await r.json();
+// Bucket = floor do pełnej godziny ('hour') albo lokalnej północy ('day').
+function bucketKey(ts, granularity) {
+  const d = new Date(ts * 1000);
+  if (granularity === 'hour') d.setMinutes(0, 0, 0); else d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+}
+function bucketIndexFromTs(records, ts, granularity) {
+  const key = bucketKey(ts, granularity);
+  return records.findIndex(r => bucketKey(r.ts, granularity) === key);
+}
 
-  // Skrót na górze: każdy wpis to fakt wystąpienia (bez start/end), więc liczba
-  // zdarzeń danego typu = liczba wystąpień tego alarmu.
-  const counts = {LOW:0, HIGH:0, TREND:0, SENSOR:0};
-  for (const ev of d.events) counts[ALARM_EVENT_NAMES[ev.type]]++;
-  const parts = ALARM_EVENT_NAMES.filter(c => counts[c] > 0).map(c => `${counts[c]}× ${c}`);
-  document.getElementById('alarmSummary').textContent = d.events.length
-    ? `${d.events.length} occurrences in returned history: ${parts.join(', ')}`
-    : 'No alarm events in history.';
+function wireChartNavButtons(scrollArea, prevBtn, nextBtn) {
+  const step = () => scrollArea.clientWidth * 0.9;
+  prevBtn.onclick = () => scrollArea.scrollBy({ left: -step(), behavior: 'smooth' });
+  nextBtn.onclick = () => scrollArea.scrollBy({ left: step(), behavior: 'smooth' });
+  const updateBtns = () => {
+    prevBtn.disabled = scrollArea.scrollLeft <= 0;
+    nextBtn.disabled = scrollArea.scrollLeft >= scrollArea.scrollWidth - scrollArea.clientWidth - 1;
+  };
+  scrollArea.addEventListener('scroll', updateBtns);
+  window.addEventListener('resize', updateBtns);
+  updateBtns();
+}
 
-  const tbody = document.getElementById('alarmEventsBody');
-  tbody.innerHTML = '';
-  for (const ev of d.events) {
-    const tr = document.createElement('tr');
-    const time = new Date(ev.ts * 1000).toLocaleString();
-    tr.innerHTML = `<td>${time}</td><td>${ev.temp_c.toFixed(1)}°C</td>` +
-      `<td>${ALARM_EVENT_NAMES[ev.type] ?? ev.type}</td>`;
-    tbody.appendChild(tr);
+// records: oldest-first [{ts, temp_c}]. alarms: [{ts, temp_c, type}] (cała
+// zwrócona historia — filtrowana tu do bucketów obecnych w records).
+function renderChart(records, alarms, targetTemp, granularity, cellWidth, els) {
+  const n = records.length;
+  els.yAxis.innerHTML = ''; els.svg.innerHTML = ''; els.labels.innerHTML = '';
+  if (n === 0) return;
+  const totalWidth = n * cellWidth;
+  const svgNS = 'http://www.w3.org/2000/svg';
+
+  const temps = records.map(r => r.temp_c);
+  const { min: minT, max: maxT, ticks } = computeChartTicks(Math.min(...temps), Math.max(...temps));
+  const yFor = (t) => CHART_PLOT_PAD_Y + (maxT - t) / (maxT - minT) * (CHART_PLOT_HEIGHT - 2 * CHART_PLOT_PAD_Y);
+
+  els.yAxis.style.height = CHART_PLOT_HEIGHT + 'px';
+  ticks.forEach(v => {
+    const el = document.createElement('div');
+    el.className = 'tick';
+    el.style.top = yFor(v) + 'px';
+    el.textContent = v + '°C';
+    els.yAxis.appendChild(el);
+  });
+  if (targetTemp !== undefined && targetTemp !== null) {
+    const el = document.createElement('div');
+    el.className = 'tick target-tick';
+    el.style.top = yFor(targetTemp) + 'px';
+    el.textContent = targetTemp.toFixed(1) + '°C';
+    els.yAxis.appendChild(el);
   }
+
+  els.inner.style.width = totalWidth + 'px';
+
+  const byBucket = {};
+  alarms.forEach(a => {
+    const idx = bucketIndexFromTs(records, a.ts, granularity);
+    if (idx < 0) return;
+    (byBucket[idx] = byBucket[idx] || []).push(a);
+  });
+
+  els.svg.setAttribute('width', totalWidth);
+  els.svg.setAttribute('height', CHART_PLOT_HEIGHT);
+
+  ticks.forEach(v => {
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', 0); line.setAttribute('x2', totalWidth);
+    line.setAttribute('y1', yFor(v)); line.setAttribute('y2', yFor(v));
+    line.setAttribute('stroke', cssVar('--border'));
+    line.setAttribute('stroke-width', '1');
+    els.svg.appendChild(line);
+  });
+
+  if (targetTemp !== undefined && targetTemp !== null) {
+    const targetY = yFor(targetTemp);
+    const targetLine = document.createElementNS(svgNS, 'line');
+    targetLine.setAttribute('x1', 0); targetLine.setAttribute('x2', totalWidth);
+    targetLine.setAttribute('y1', targetY); targetLine.setAttribute('y2', targetY);
+    targetLine.setAttribute('class', 'target-marker');
+    els.svg.appendChild(targetLine);
+  }
+
+  const nowLine = document.createElementNS(svgNS, 'line');
+  const nowX = (n - 1) * cellWidth + cellWidth / 2;
+  nowLine.setAttribute('x1', nowX); nowLine.setAttribute('x2', nowX);
+  nowLine.setAttribute('y1', 0); nowLine.setAttribute('y2', CHART_PLOT_HEIGHT);
+  nowLine.setAttribute('class', 'now-marker');
+  els.svg.appendChild(nowLine);
+
+  const points = records.map((r, i) => [i * cellWidth + cellWidth / 2, yFor(r.temp_c)]);
+  const poly = document.createElementNS(svgNS, 'polyline');
+  poly.setAttribute('points', points.map(p => p.join(',')).join(' '));
+  poly.setAttribute('fill', 'none');
+  poly.setAttribute('stroke', cssVar('--accent-cyan'));
+  poly.setAttribute('stroke-width', '1.5');
+  els.svg.appendChild(poly);
+
+  records.forEach((r, i) => {
+    const [x, y] = points[i];
+    const bucketEvents = byBucket[i];
+    if (bucketEvents) {
+      let topType = bucketEvents[0].type;
+      bucketEvents.forEach(a => { if ((ALARM_PRIORITY[a.type] ?? 1) > (ALARM_PRIORITY[topType] ?? 1)) topType = a.type; });
+      const marker = document.createElementNS(svgNS, 'circle');
+      marker.setAttribute('cx', x); marker.setAttribute('cy', y);
+      marker.setAttribute('r', topType === 3 ? CHART_ALARM_R_SENSOR : CHART_ALARM_R);
+      marker.setAttribute('fill', cssVar(ALARM_COLOR_VARS[topType]) || '#999');
+      const title = document.createElementNS(svgNS, 'title');
+      title.textContent = bucketEvents.map(a =>
+        `${ALARM_EVENT_NAMES[a.type] ?? a.type} @ ${new Date(a.ts * 1000).toLocaleString()} (${a.temp_c.toFixed(1)}°C)`
+      ).join('\n');
+      marker.appendChild(title);
+      els.svg.appendChild(marker);
+    } else {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 2.2);
+      c.setAttribute('fill', cssVar('--accent-cyan'));
+      const title = document.createElementNS(svgNS, 'title');
+      title.textContent = `${new Date(r.ts * 1000).toLocaleString()} — ${r.temp_c.toFixed(1)}°C`;
+      c.appendChild(title);
+      els.svg.appendChild(c);
+    }
+  });
+
+  els.labels.style.height = CHART_LABEL_ROW_H + 'px';
+  records.forEach((r, i) => {
+    const d = new Date(r.ts * 1000);
+    const cell = document.createElement('div');
+    cell.className = 'chart-label' + (i === n - 1 ? ' now' : '');
+    cell.style.width = cellWidth + 'px';
+    const span = document.createElement('span');
+    span.textContent = granularity === 'hour'
+      ? String(d.getHours()).padStart(2, '0') + ':00'
+      : String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
+    cell.appendChild(span);
+    els.labels.appendChild(cell);
+  });
+
+  els.scroll.scrollLeft = els.scroll.scrollWidth;
+  wireChartNavButtons(els.scroll, els.prevBtn, els.nextBtn);
+}
+
+const hourlyChartEls = {
+  yAxis: document.getElementById('yAxisHourly'), scroll: document.getElementById('scrollHourly'),
+  inner: document.getElementById('innerHourly'), svg: document.getElementById('svgHourly'),
+  labels: document.getElementById('labelsHourly'),
+  prevBtn: document.getElementById('prevBtnHourly'), nextBtn: document.getElementById('nextBtnHourly'),
+};
+const dailyChartEls = {
+  yAxis: document.getElementById('yAxisDaily'), scroll: document.getElementById('scrollDaily'),
+  inner: document.getElementById('innerDaily'), svg: document.getElementById('svgDaily'),
+  labels: document.getElementById('labelsDaily'),
+  prevBtn: document.getElementById('prevBtnDaily'), nextBtn: document.getElementById('nextBtnDaily'),
+};
+
+async function loadCharts() {
+  try {
+    const [hr, dr, ar, cfg] = await Promise.all([
+      fetch('api/history-hourly').then(r => r.json()),
+      fetch('api/history-daily').then(r => r.json()),
+      fetch('api/alarm-events').then(r => r.json()),
+      fetch('api/thermo-config').then(r => r.json()),
+    ]);
+    const hourlyRecords = hr.records.slice().reverse();  // API: newest-first -> chart: oldest-first
+    const dailyRecords  = dr.records.slice().reverse();
+    renderChart(hourlyRecords, ar.events, cfg.target_temp, 'hour', 34, hourlyChartEls);
+    renderChart(dailyRecords,  ar.events, cfg.target_temp, 'day',  30, dailyChartEls);
+  } catch (err) { console.error(err); }
 }
 
 document.getElementById('heaterToggle').addEventListener('click', async () => {
@@ -811,6 +1082,12 @@ document.getElementById('btnResetSensor').addEventListener('click', () => {
     refresh();
   });
 });
+document.getElementById('btnEnergyReset').addEventListener('click', () => {
+  showConfirm('Reset total energy counter?', 'This permanently zeroes the total kWh counter. This cannot be undone.', 'warn', async () => {
+    await fetch('api/energy-reset-total', { method: 'POST' });
+    refresh();
+  });
+});
 document.getElementById('btnLogout').addEventListener('click', async () => {
   await fetch('api/logout', { method: 'POST' });
   window.location.href = 'login';
@@ -825,19 +1102,19 @@ document.getElementById('btnSaveThermo').addEventListener('click', async () => {
   }
   const r = await fetch('api/thermo-config', { method: 'POST', body: new URLSearchParams(body) });
   const j = await r.json();
-  document.getElementById('err_thermo').textContent = j.ok ? '' : (j.error || 'Save failed');
+  if (j.ok) {
+    showAlert('Saved', 'Algorithm settings have been saved.', 'ok');
+  } else {
+    showAlert('Error', j.error || 'Save failed', 'err');
+  }
 });
 
-document.getElementById('btnLoadHourly').addEventListener('click', loadHourly);
-document.getElementById('btnLoadDaily').addEventListener('click', loadDaily);
-document.getElementById('btnLoadAlarms').addEventListener('click', loadAlarmEvents);
+document.getElementById('btnLoadCharts').addEventListener('click', loadCharts);
 
 updateLockUI();
 loadDeviationReasons().then(refresh);
 loadThermoConfig();
-loadHourly();
-loadDaily();
-loadAlarmEvents();
+loadCharts();
 setInterval(refresh, 5000);
 </script>
 </div>

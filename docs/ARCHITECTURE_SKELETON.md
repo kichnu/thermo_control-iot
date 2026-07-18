@@ -207,7 +207,7 @@ struct ThermoConfig {               // 40B + 2B checksum
     float    alarm_delta_high;      // ALARM powyżej T+X             default 1.5
     float    trend_alarm_delta;     // spadek temp [°C/5min] → alarm  default 0.5
     float    temp_offset;           // kalibracja STS35 [°C]         default 0.0
-    float    heater_watt;           // moc grzałek [W], 10–1000      default 0.0
+    float    heater_watt;           // NIEOBSŁUGIWANE — pole na zapas, nieużywane w algorytmie (2026-07-16)
     uint16_t pulses_per_kwh;        // miernik energii [imp/kWh]     default 1000
     uint8_t  is_configured;         // 0xA9 = ważna konfiguracja
     uint8_t  _pad;
@@ -500,7 +500,7 @@ lib_deps =
 | Alarm trendu              | RAM bufor 20×15s, brak zapisu do FRAM                      |
 | Czujnik temp              | 1× STS35, Wire1 (I2C1) 0x4B, co 15s, ±0.1°C, kabel ~1m |
 | Termostat grzałki         | przestawić na 28–30°C                                      |
-| Pomiar mocy grzałki       | obliczany: heater_watt × heater_pct                        |
+| Pomiar mocy grzałki       | heater_watt NIEOBSŁUGIWANY — pole na zapas (GUI/API/FRAM istnieją, algorytm ich nie czyta); realna moc/energia liczona wyłącznie z licznika impulsów (pulses_per_kwh) |
 | Miernik energii           | pulse input GPIO9, ISR FALLING, optocoupler PC817          |
 | Ring buffer               | 800×8B, EVENT-DRIVEN (zmiana LogZone/heartbeat/boot), nie periodic |
 | Historia                  | zmienna: ~800 dni stabilnie / ~16,6 doby w najgorszym razie (flapowanie) |

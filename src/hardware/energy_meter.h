@@ -17,8 +17,10 @@ float    getEnergyKwhTotal();           // narastające kWh od ostatniego resetu
 float    getEnergyKwhToday();           // kWh w bieżącej dobie
 uint32_t getEnergyPulseCount();         // surowy licznik impulsów
 float    getPowerWatt();                // moc chwilowa [W] z czasu między impulsami
+uint32_t getEnergyResetTimestamp();     // Unix UTC ostatniego kasowania licznika total (0 = nigdy)
 
 void     energyResetDayCounter();       // reset licznika dobowego (co północ)
+void     energyResetTotalCounter();     // kasowanie licznika total z przycisku GUI (PIN po stronie web_handlers/GUI) — zapisuje też timestamp
 void     energyLoadFromFRAM();
 void     energySaveToFRAM();
 

@@ -83,6 +83,28 @@ ValidationResult prov_validateAdminPassword(const String& password) {
     return result;
 }
 
+ValidationResult prov_validateLockPin(const String& pin) {
+    ValidationResult result;
+    result.valid = true;
+    result.errorField = "lock_pin";
+
+    if (pin.length() < 4 || pin.length() > 7) {
+        result.valid = false;
+        result.errorMessage = "Lock PIN must be 4-7 digits";
+        return result;
+    }
+
+    for (size_t i = 0; i < pin.length(); i++) {
+        if (!isdigit(pin.charAt(i))) {
+            result.valid = false;
+            result.errorMessage = "Lock PIN must contain only digits";
+            return result;
+        }
+    }
+
+    return result;
+}
+
 ValidationResult prov_validateAllCredentials(
     const String& deviceName,
     const String& wifiSSID,

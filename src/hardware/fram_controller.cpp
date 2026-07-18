@@ -254,6 +254,137 @@ bool loadEnergyStoreFromFRAM(EnergyStore& store) {
     return true;
 }
 
+bool saveEnergyResetInfoToFRAM(const EnergyResetInfo& info) {
+    if (!framInitialized) return false;
+
+    EnergyResetInfo tmp = info;
+    size_t checksum_offset = offsetof(EnergyResetInfo, checksum);
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+
+    framWrite(FRAM_ADDR_ENERGY_RESET, &tmp, sizeof(EnergyResetInfo));
+
+    LOG_INFO("EnergyResetInfo saved: reset_ts=%u", tmp.reset_ts);
+    return true;
+}
+
+bool loadEnergyResetInfoFromFRAM(EnergyResetInfo& info) {
+    if (!framInitialized) return false;
+
+    EnergyResetInfo tmp;
+    fram.read(FRAM_ADDR_ENERGY_RESET, (uint8_t*)&tmp, sizeof(EnergyResetInfo));
+
+    size_t checksum_offset = offsetof(EnergyResetInfo, checksum);
+    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+    if (calc != tmp.checksum) {
+        LOG_WARNING("EnergyResetInfo checksum mismatch — using defaults (0)");
+        return false;
+    }
+
+    info = tmp;
+    return true;
+}
+
+// ===============================
+// C-09 — odstępstwo od temp. zadanej + lock-PIN edycji GUI (checksum
+// wbudowany w struct, jak EnergyStore — spójny prymityw w tym pliku)
+// ===============================
+
+bool saveDeviationStateToFRAM(const TempDeviationState& state) {
+    if (!framInitialized) return false;
+
+    TempDeviationState tmp = state;
+    size_t checksum_offset = offsetof(TempDeviationState, checksum);
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+
+    framWrite(FRAM_ADDR_DEVIATION_STATE, &tmp, sizeof(TempDeviationState));
+    return true;
+}
+
+bool loadDeviationStateFromFRAM(TempDeviationState& state) {
+    if (!framInitialized) return false;
+
+    TempDeviationState tmp;
+    fram.read(FRAM_ADDR_DEVIATION_STATE, (uint8_t*)&tmp, sizeof(TempDeviationState));
+
+    size_t checksum_offset = offsetof(TempDeviationState, checksum);
+    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+    if (calc != tmp.checksum) {
+        // Świeży/uszkodzony FRAM — bezpieczny default: brak aktywnego odstępstwa.
+        state = TempDeviationState{};
+        state.active = 0;
+        return false;
+    }
+
+    state = tmp;
+    return true;
+}
+
+bool saveDeviationReasonsToFRAM(const DeviationReasonList& list) {
+    if (!framInitialized) return false;
+
+    DeviationReasonList tmp = list;
+    size_t checksum_offset = offsetof(DeviationReasonList, checksum);
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+
+    framWrite(FRAM_ADDR_DEVIATION_REASONS, &tmp, sizeof(DeviationReasonList));
+    return true;
+}
+
+bool loadDeviationReasonsFromFRAM(DeviationReasonList& list) {
+    if (!framInitialized) return false;
+
+    DeviationReasonList tmp;
+    fram.read(FRAM_ADDR_DEVIATION_REASONS, (uint8_t*)&tmp, sizeof(DeviationReasonList));
+
+    size_t checksum_offset = offsetof(DeviationReasonList, checksum);
+    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+    if (calc != tmp.checksum) {
+        // Świeży/uszkodzony FRAM — wszystkie sloty puste, frontend pokaże "brak".
+        list = DeviationReasonList{};
+        return false;
+    }
+
+    list = tmp;
+    return true;
+}
+
+bool saveLockPinToFRAM(const LockPin& pin) {
+    if (!framInitialized) return false;
+
+    LockPin tmp = pin;
+    tmp.pin[sizeof(tmp.pin) - 1] = '\0';
+    tmp.magic = LOCK_PIN_MAGIC;
+    size_t checksum_offset = offsetof(LockPin, checksum);
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+
+    framWrite(FRAM_ADDR_LOCK_PIN, &tmp, sizeof(LockPin));
+    return true;
+}
+
+bool loadLockPinFromFRAM(LockPin& pin) {
+    if (!framInitialized) return false;
+
+    LockPin tmp;
+    fram.read(FRAM_ADDR_LOCK_PIN, (uint8_t*)&tmp, sizeof(LockPin));
+
+    size_t checksum_offset = offsetof(LockPin, checksum);
+    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
+    if (tmp.magic != LOCK_PIN_MAGIC || calc != tmp.checksum) {
+        // Świeży/uszkodzony FRAM — lazy-init do domyślnego PIN-u "1234" (jak dozownik).
+        // magic sprawdzany OBOK checksumu — sam checksum (suma bajtów) nie
+        // odróżnia "poprawnie zapisanych samych zer" od "nigdy niezapisanej,
+        // zerowej pamięci" (patrz komentarz przy LockPin w algorithm_config.h).
+        LockPin def{};
+        strncpy(def.pin, "1234", sizeof(def.pin) - 1);
+        saveLockPinToFRAM(def);
+        pin = def;
+        return true;
+    }
+
+    pin = tmp;
+    return true;
+}
+
 // ================================================================
 // RING BUFFERS — generyczna implementacja (count/wptr/checksum + dane),
 // parametryzowana adresami/pojemnością/rozmiarem rekordu. Używana przez
