@@ -2,6 +2,12 @@
 
 > Status: ZAMKNIĘTA. Decyzja: ON/OFF histereza via SSR.
 
+> ⚠️ **Uzasadnienie (§1–6) wciąż aktualne. Struktury C w §7–8 — nie.**
+> `ThermoConfig`/`TempRecord` poniżej to migawka sprzed implementacji: pola
+> zmieniły się (m.in. zniknęło `hysteresis_band`, doszły `trend_alarm_delta`,
+> `pulses_per_kwh`, `trend_window_min`, `fan_min_pct`), inny jest też rozmiar.
+> Źródło prawdy: `src/algorithm/algorithm_config.h`.
+
 ---
 
 ## 1. Dlaczego ON/OFF wystarcza — first principles

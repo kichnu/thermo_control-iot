@@ -2,6 +2,12 @@
 
 > Status: gotowy do zatwierdzenia i startu implementacji.
 
+> ⚠️ **Migawka sprzed startu implementacji.** Pinout w §2 nie jest już zgodny z
+> `src/hardware/hardware_pins.h` (piny przypisywane od nowa w trakcie bring-upu) —
+> traktować jako historię decyzji, nie źródło prawdy. Aktualny pinout zawsze w
+> `hardware_pins.h`. Odwołanie do `docs/ESP32-S3-Pico pinout.md` w §1/§2 wskazuje
+> na plik, którego już nie ma w repo (tylko `ESP32-S3-Pico.png` zostało).
+
 ---
 
 ## 1. Stack sprzętowy (potwierdzony)
