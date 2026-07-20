@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <ArduinoOTA.h>
 #include "core/logging.h"
 #include "config/config.h"
 #include "config/credentials_manager.h"
@@ -86,6 +87,21 @@ void setup() {
     thermoAlgorithm.begin();
 
     initWiFi();
+
+    if (isWiFiConnected()) {
+        ArduinoOTA.setPassword(OTA_PASSWORD);
+        ArduinoOTA.onStart([]() {
+            LOG_INFO("=== OTA START — wylaczam grzalke/fan przed zapisem flash ===");
+            heaterEmergencyOff();
+            fanEmergencyOff();
+            setSystemState(false);
+        });
+        ArduinoOTA.begin();
+        LOG_INFO("ArduinoOTA ready (port 3232)");
+
+        startLogServer();
+    }
+
     initAuthManager();
     initSessionManager();
     initRateLimiter();
@@ -113,6 +129,8 @@ void setup() {
 }
 
 void loop() {
+    ArduinoOTA.handle();
+
     unsigned long now = millis();
 
     // Codzienny restart o północy (minimalny uptime: 30 min)
@@ -145,6 +163,7 @@ void loop() {
         updateSessionManager();
         updateRateLimiter();
         updateWiFi();
+        updateLogServer();
         updateEnergyMeter();
         updateRTCSync();
         thermoAlgorithm.checkLogRollover();
