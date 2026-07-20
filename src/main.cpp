@@ -77,6 +77,8 @@ void setup() {
     bool credentials_loaded = initCredentialsManager();
     LOG_INFO("Device ID: %s", credentials_loaded ? getDeviceID() : "FALLBACK");
 
+    pinMode(RESERVE_PIN, INPUT_PULLUP);  // pin rezerwowy, sąsiaduje z HEATER_SSR_PIN — patrz hardware_pins.h
+
     initTempSensor();
     initHeaterController();
     initFanController();

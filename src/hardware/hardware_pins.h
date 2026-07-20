@@ -42,13 +42,13 @@
 //                                          GPIO 15 ────┤                        ├──── GPIO 10 FRAM_SPI_CS_PIN                      
 //                                          GPIO 16 ────┤                        ├──── GPIO  9 ENERGY_PULSE_PIN
 //                                            GND   ────┤                        ├──── GND
-//                                          GPIO 17 ────┤                        ├──── GPIO  8 STS35_SCL_PIN
-//                                          GPIO 18 ────┤                        ├──── GPIO  7 STS35_SDA_PIN
+//                          HEATER_SSR_PIN  GPIO 17 ────┤                        ├──── GPIO  8 STS35_SCL_PIN
+//                             RESERVE_PIN  GPIO 18 ────┤                        ├──── GPIO  7 STS35_SDA_PIN
 //                                          GPIO 33 ────┤                        ├──── RUN  
 //                                          GPIO 34 ────┤                        ├──── GPIO  6 I2C_SCL_PIN
 //                                            GND   ────┤                        ├──── GND
 //                                          GPIO 35 ────┤                        ├──── GPIO  5 I2C_SDA_PIN
-//                                          GPIO 36 ────┤                        ├──── GPIO  4 HEATER_SSR_PIN 
+//                                          GPIO 36 ────┤                        ├──── GPIO  4  
 //                                RESET_PIN GPIO 37 ────┤                        ├──── GPIO  2 FAN_PWM_PIN
 //                                          GPIO 38 ────┤                        ├──── GPIO  1 BUZZER_PIN
 //                                            GND   ────┤                        ├──── GND  
@@ -57,8 +57,14 @@
 //                                                      └───────────────   ──────┘
 
 // ============== ACTUATORS ==============
-#define HEATER_SSR_PIN      4   // SSR grzałki (active LOW: LOW = grzeje)
+#define HEATER_SSR_PIN      17   // SSR grzałki (active LOW: LOW = grzeje)
 #define FAN_PWM_PIN         2   // Iduino ST1168 MOSFET PWM (HIGH = max)
+
+// ============== RESERVE ==============
+// Fizycznie sąsiaduje z HEATER_SSR_PIN (17) na złączu płytki — pozostawiony
+// jako floating input, dublował zbocza SSR (przesłuch pojemnościowy między
+// sąsiednimi pinami). INPUT_PULLUP wymusza stan 1 = nieaktywny.
+#define RESERVE_PIN         18
 
 // ============== I2C0 (Wire) — DS3231 RTC — kable krótkie ====================
 #define I2C_SDA_PIN         5
@@ -85,6 +91,6 @@
                                 // GPIO3 = strapping JTAG source (niekrytyczne)
 
 // ============== WOLNE (zarezerwowane na przyszłość) ==========================
-// GPIO14-18, GPIO21 — wolne po przypisaniu SPI FRAM (GPIO10-13)
+// GPIO14-16, GPIO21 — wolne po przypisaniu SPI FRAM (GPIO10-13)
 
 #endif // HARDWARE_PINS_H
