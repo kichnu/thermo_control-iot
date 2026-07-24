@@ -87,7 +87,7 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 | F-02 | REST API (auth cookie)                              | [v1]   | z projektu ATO, nowe endpointy           |
 | F-03 | NTP sync przez RTC DS3231                           | [v1]   | z projektu ATO bez zmian                 |
 | F-04 | MQTT broker client                                  | [v2]   | PubSubClient library                     |
-| F-05 | OTA firmware update via web                         | [ ]    | ryzyko brick bez rollback, pominąć       |
+| F-05 | OTA firmware update via web                         | [ ]    | ryzyko brick bez rollback, pominąć; nie mylić z dev-tooling ArduinoOTA (zaimplementowane, USB-only fallback) — patrz `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md` §1 |
 
 ---
 

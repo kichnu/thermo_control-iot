@@ -1,7 +1,10 @@
 # Architektura: upload firmware przez WiFi, logi zdalne, CLI dwukierunkowe
 
-Ustalenia koncepcyjne z 2026-07-19. **Nic z poniższego nie jest jeszcze zaimplementowane**
-— to zapis decyzji architektonicznych do wdrożenia później.
+Ustalenia koncepcyjne z 2026-07-19. **Punkty 1–2 (OTA, log-socket) zaimplementowane
+i zweryfikowane end-to-end na sprzęcie (2026-07-24)** — patrz sekcje "Status" niżej.
+Punkt 3 (CLI dwukierunkowe) to wciąż tylko wzorzec koncepcyjny, nie dotyczy tego repo.
+Krótki, przenośny wyciąg do skopiowania w kolejnych projektach (Dolewka, Dozownik):
+`docs/OTA_WIFI_UPLOAD_PATTERN.md`.
 
 Kontekst: jedna sztuka `thermo_control` (ESP32-S3), zamontowana w obudowie akwarium,
 bez łatwego fizycznego dostępu do USB. Development odbywa się w tej samej sieci LAN
@@ -30,11 +33,17 @@ Zakres zmian:
 - `ArduinoOTA.onStart()` jako hook do wywołania odpowiednika `setSystemState(false)`
   (wyłączenie grzałki/fana) przed zapisem do flash.
 
-Koszt: partycje OTA (app0/app1) w `board_build.partitions = huge_app.csv`
-(platformio.ini:9) **już dziś** dzielą flash na dwa sloty — to nie jest nowy koszt
-wynikający z dodania kodu OTA, tylko istniejący układ partycji. Realny limit to
-rozmiar binarki (musi się zmieścić w jednym slocie), nie RAM — sam kod
-`ArduinoOTA`/`Update.h` to kilkanaście KB, nie dubluje zużycia RAM w runtime.
+Koszt: **błędne założenie z 2026-07-19** — zapisano tu, że `huge_app.csv` "już dziś
+dzieli flash na dwa sloty (app0/app1)". Nieprawda: `huge_app.csv` ma tylko jeden
+slot aplikacji (`app0`, `ota_0`), bez `app1` — nie zweryfikowano wtedy treści
+pliku CSV z frameworku. Realny koszt jednego slotu: OTA nadpisuje partycję,
+z której firmware aktualnie działa (self-overwrite) — to i tak wspierany przez
+`Update.h` schemat, ale na tym sprzęcie powodował twardy `abort()` w
+`esp_flash_erase_region` przy pierwszym erase (patrz status niżej — naprawione
+przejściem na `app3M_fat9M_16MB.csv`, prawdziwe dwa sloty, ten sam rozmiar
+per-slot co poprzednio). Realny limit to rozmiar binarki (musi się zmieścić
+w jednym slocie), nie RAM — sam kod `ArduinoOTA`/`Update.h` to kilkanaście KB,
+nie dubluje zużycia RAM w runtime.
 
 USB i OTA nie wykluczają się — oba environmenty mogą współistnieć w `platformio.ini`.
 
@@ -65,6 +74,104 @@ USB i OTA nie wykluczają się — oba environmenty mogą współistnieć w `pla
   kolejne uploady mogą iść przez `-e seeed_xiao_esp32s3_ota`.
 
 Użycie: `export OTA_PASSWORD=haslo && pio run -e seeed_xiao_esp32s3_ota -t upload`.
+
+### Gotcha: komp dev i ESP32 w różnych podsieciach (Mikrotik, izolacja IoT) — 2026-07-23
+
+Pierwszy realny test na sprzęcie: `pio run -e seeed_xiao_esp32s3_ota -t upload
+--upload-port 192.168.10.4` — auth przechodzi (`Authenticating...OK`), ale potem
+`Waiting for device... No response from device` (timeout 10s).
+
+Diagnoza (tcpdump na interfejsie kompa podczas próby): UDP invitation + auth
+handshake (4 pakiety) przechodzi w obie strony bez problemu. Zwrotne połączenie
+**TCP inicjowane przez ESP32** z powrotem do kompa (na losowy `host_port`) w ogóle
+nie pojawia się w przechwyconym ruchu — ani jako SYN od urządzenia, ani odrzucony.
+
+Przyczyna: komp (`192.168.2.10/24`) i ESP32 (`192.168.10.4/24`) są w różnych
+podsieciach za routerem Mikrotik, z **celową** izolacją IoT VLAN. Ruch inicjowany
+z LAN do IoT (GET-y dashboardu, UDP invitation) działa — to established/related
+z punktu widzenia firewalla. Nowe połączenie inicjowane PRZEZ urządzenie IoT z
+powrotem do LAN (dokładnie to, czego wymaga espota po autentykacji) jest
+blokowane. Typowy wzorzec reguł "IoT może być odpytywane, nie może samo wchodzić
+do LAN".
+
+Fix (dwie części):
+
+1. **W repo** — `platformio.ini`, `upload_flags` dla `seeed_xiao_esp32s3_ota`:
+   dodany `--host_port=8266`, żeby wymusić stały port zwrotny (domyślnie
+   `espota.py` losuje z zakresu 10000-60000 przy każdym uruchomieniu — bez tego
+   nie da się zawęzić reguły firewalla do jednego portu).
+2. **Poza repo, na routerze Mikrotik** — tymczasowa reguła firewalla,
+   domyślnie wyłączona, włączana ręcznie tylko na czas uploadu:
+
+   ```
+   /ip firewall filter add chain=forward action=accept protocol=tcp \
+       src-address=192.168.10.4 dst-address=192.168.2.10 dst-port=8266 \
+       comment="OTA-thermo-temp" disabled=yes place-before=<numer reguly blokujacej>
+   ```
+
+   Workflow przy każdym OTA-uploadzie:
+   ```
+   # Mikrotik, przed uploadem
+   /ip firewall filter enable [find comment="OTA-thermo-temp"]
+
+   # komp
+   export OTA_PASSWORD=... && pio run -e seeed_xiao_esp32s3_ota -t upload --upload-port 192.168.10.4
+
+   # Mikrotik, po uploadzie
+   /ip firewall filter disable [find comment="OTA-thermo-temp"]
+   ```
+
+**Status: ustalone, reguła na Mikrotiku jeszcze nie dodana/przetestowana end-to-end**
+(wracamy do tego — dodanie reguły i pełny upload firmware to kolejny krok).
+
+---
+
+### Gotcha: `abort()` w `esp_flash_erase_region` przy pierwszym erase — 2026-07-23/24
+
+Po ustaleniu reguły Mikrotika (wyżej): auth przechodzi, ale upload zawsze utykał
+na 0% i po ~10s host zgłaszał `timed out`/`Connection reset by peer`. Serial
+(USB, bo log-socket nie łapie crasha — pisze na UART z pominięciem
+`logging.cpp`) pokazywał identyczny crash za każdym razem:
+
+```
+=== OTA START — wylaczam grzalke/fan przed zapisem flash ===
+=== SYSTEM DISABLED — algorytm wstrzymany ===
+
+abort() was called at PC 0x40375ca7 on core 1
+Backtrace: ... 40375ca7 ... esp_flash_erase_region ... UpdateClass::_writeBuffer ...
+```
+
+Dekodowanie przez `xtensa-esp32s3-elf-addr2line`/`objdump` na `firmware.elf`
+z tego samego builda: PC leży dokładnie w miejscu, gdzie `esp_flash_erase_region`
+sprawdza wynik `chip_drv->erase_sector(...)` — jeśli wynik ≠ `ESP_OK` i
+≠ `ESP_ERR_NOT_ALLOWED` (`0x10D`), IDF robi świadomy `abort()` (nie losowy crash
+pamięci). Pierwsza hipoteza — szum EMI na GPIO9 (~700 fałszywych imp/s, patrz
+pamięć projektu) przerywający polling flash w oknie, gdy IDF zawiesza drugi
+rdzeń/cache — **obalona empirycznie**: dodanie `pauseEnergyPulseInterrupt()`/
+`resumeEnergyPulseInterrupt()` (`energy_meter.h/.cpp`) wywoływanego w
+`ArduinoOTA.onStart()`/`onError()` nie zmieniło niczego — identyczny PC.
+
+Prawdziwa przyczyna: `board_build.partitions = huge_app.csv` miał (wbrew temu,
+co napisano w §1 wyżej) tylko **jeden** slot aplikacji (`app0`) — OTA nadpisywało
+partycję, z której firmware aktualnie działał (self-overwrite). Na tym
+konkretnym sprzęcie (Waveshare ESP32-S3-Pico, realnie 16MB flash, uruchamiany
+przez profil płytki `seeed_xiao_esp32s3` który zresztą też się myli co do
+PSRAM — stąd `PSRAM ID read error` przy każdym boocie) ten schemat powodował
+twardy błąd sterownika flash przy erase.
+
+Fix: `board_build.partitions` zmienione na `app3M_fat9M_16MB.csv` (dopasowane
+do realnych 16MB flash) — prawdziwe dwa sloty `app0`/`app1`, **każdy dokładnie
+tej samej wielkości co poprzedni pojedynczy slot** (0x300000 = 3MB), więc zero
+straty miejsca na firmware; partycja danych zmieniona ze SPIFFS na FAT
+(nieużywana w projekcie — dane trzymane w zewnętrznym FRAM SPI). Wymagało
+jednego reflashu USB (zmiana partycji nie przechodzi przez samo OTA). Po
+zmianie: OTA upload przeszedł 0→100%, `Result: OK`, urządzenie odpowiada
+normalnie po restarcie (`/api/health`).
+
+**Status: naprawione, OTA upload end-to-end działa (2026-07-24).**
+Pauza ISR licznika energii w `onStart()`/`onError()` została w kodzie mimo że
+nie była przyczyną tego konkretnego crasha — nieszkodliwa i tak czy inaczej
+rozsądna higiena wokół flash-erase.
 
 ---
 
@@ -153,8 +260,10 @@ Ustalenia koncepcyjne z 2026-07-19. Wdrożenie w kolejności: (1) OTA + drugi
 environment, (2) log-socket w `logging.cpp`, (3) CLI — dopiero gdy dotyczy
 konkretnego urządzenia z aktuatorem.
 
-- (1) OTA — zaimplementowane 2026-07-20, patrz sekcja 1 wyżej. Niepotwierdzone
-  na sprzęcie.
+- (1) OTA — zaimplementowane 2026-07-20. Pierwszy test na sprzęcie 2026-07-23:
+  auth/handshake potwierdzony, pełny upload zablokowany przez izolację IoT VLAN
+  na Mikrotiku (komp i ESP32 w różnych podsieciach) — workaround ustalony,
+  patrz "Gotcha" w sekcji 1, jeszcze nie przetestowany end-to-end.
 - (2) log-socket — zaimplementowane 2026-07-20, patrz sekcja 2 wyżej.
   Niepotwierdzone na sprzęcie.
 - (3) CLI — nie zaimplementowane, nie dotyczy tego repo.

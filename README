@@ -21,6 +21,12 @@ needed to build/upload/operate the firmware.
 | Fan               | MOSFET PWM (Iduino ST1168, LEDC)                                     |
 | Energy meter      | GPIO pulse input (ISR, no boot glitch)                               |
 | Buzzer            | passive, HIGH = ON                                                   |
+| Flash             | 16MB (real chip — PlatformIO board profile `seeed_xiao_esp32s3` assumes 8MB + PSRAM neither of which match this board; see partition note below) |
+
+**Partitions:** `board_build.partitions = app3M_fat9M_16MB.csv` (two 3MB OTA
+slots, sized for the real 16MB flash — not the board profile's default). A
+mismatched single-slot table here previously caused a hard crash on OTA
+upload; see `docs/OTA_WIFI_UPLOAD_PATTERN.md` before changing this.
 
 ### Pins (`src/hardware/hardware_pins.h` — source of truth)
 
@@ -66,8 +72,8 @@ pio run -t upload
 pio device monitor          # 115200 baud
 
 # OTA (WiFi) — only works once the device is already running firmware with this code, see below
-export OTA_PASSWORD=password
-pio run -e seeed_xiao_esp32s3_ota -t upload
+export OTA_PASSWORD='password'   # single quotes — see gotcha below
+pio run -e seeed_xiao_esp32s3_ota -t upload --upload-port 192.168.10.4
 
 # Remote logs (no USB) — requires firmware with the log-socket, see below
 pio device monitor --port socket://<device-ip>:8880
@@ -76,8 +82,16 @@ pio device monitor --port socket://<device-ip>:8880
 **The first upload of firmware containing OTA/log-socket must go over USB** — neither
 mechanism works until firmware that includes it is already running
 (`ArduinoOTA`/`WiFiServer` don't exist in older builds). Subsequent uploads can go
-through `-e seeed_xiao_esp32s3_ota`. Details and gotchas (`default_envs`, one
-log-socket client at a time, etc.) → `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`.
+through `-e seeed_xiao_esp32s3_ota`. Verified working end-to-end on hardware
+(2026-07-24). Details, full gotcha history (`default_envs`, VLAN/firewall,
+partition-scheme crash, one log-socket client at a time, etc.) →
+`docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`; short portable checklist for
+reusing this in other projects → `docs/OTA_WIFI_UPLOAD_PATTERN.md`.
+
+**Gotcha:** `export OTA_PASSWORD=...` must be in the *same* shell invocation as
+`pio run` (a separate command/process won't see it — the device would get
+reflashed with an empty password baked in). Quote the password in single
+quotes if it contains shell-special characters (`#`, `$`, spaces).
 
 ## Provisioning (first-time setup)
 
@@ -153,7 +167,8 @@ src/
 | `FEATURES_REGISTRY.md` | Feature registry, v1/v2/rejected, kept up to date | most current reference for scope |
 | `ARCHITECTURE_SKELETON.md` | Architecture design predating implementation start | ⚠️ banner in file — §2 (pin table) is stale, source of truth: `hardware_pins.h` |
 | `ALGORITHM_DECISION.md` | Rationale for ON/OFF+SSR vs PID/relay, energy measurement | ⚠️ banner in file — §7–8 (C structs) are stale, source of truth: `algorithm_config.h` |
-| `DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md` | OTA / log-socket / CLI — dev tooling | points 1–2 implemented, unverified on hardware; point 3 doesn't apply to this repo |
+| `DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md` | OTA / log-socket / CLI — dev tooling | points 1–2 implemented and verified on hardware (2026-07-24); point 3 doesn't apply to this repo |
+| `OTA_WIFI_UPLOAD_PATTERN.md` | Short, portable OTA setup checklist — for reuse in Dolewka/Dozownik | pointer, not a substitute for the architecture doc |
 | `NETWORK_TOPOLOGY_ESP32.md` | VPS/WireGuard/nginx topology + firmware-side integration gotchas | — |
 | `ESP32-S3-Pico.png` | Board pinout (image) | — |
 

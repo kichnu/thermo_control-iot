@@ -11,6 +11,14 @@
 void initEnergyMeter(uint16_t pulses_per_kwh);
 void updateEnergyMeter();               // wywołuj co loop() — obsługuje zapis do FRAM
 
+// Odłącza/przywraca ISR impulsów energii — używane wokół OTA erase/write:
+// szum EMI na GPIO9 (rząd 700 fałszywych imp/s, patrz pamięć projektu) strzela
+// ISR-em na tym samym rdzeniu, który w tym momencie polluje status rejestru
+// flash przy kasowaniu sektora; przy dużej częstotliwości przerwań ta pętla
+// pollingu może przekroczyć swój timeout i wywołać abort() w esp_flash_erase_region.
+void pauseEnergyPulseInterrupt();
+void resumeEnergyPulseInterrupt();
+
 void setEnergyPulsesPerKwh(uint16_t ppk);
 
 float    getEnergyKwhTotal();           // narastające kWh od ostatniego resetu

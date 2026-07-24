@@ -14,9 +14,19 @@ static uint32_t          s_reset_ts       = 0;    // Unix UTC ostatniego kasowan
 
 static const uint32_t ENERGY_SAVE_EVERY_N_PULSES = 10;
 
+// Min. odstęp między akceptowanymi impulsami — odrzuca zbocza fizycznie
+// niemożliwe dla licznika S0 (drgania styków / szum EMI z sąsiadującego kabla
+// 230V, patrz pamięć projektu). 50ms = maks. 20 imp/s = ok. 72 kW przy
+// pulses_per_kwh=1000 — duży zapas ponad realną moc grzałki/pompy.
+static const uint32_t MIN_PULSE_INTERVAL_MS = 50;
+
 void IRAM_ATTR onEnergyPulse() {
+    uint32_t now = millis();
+    if (s_last_pulse_ms != 0 && (now - s_last_pulse_ms) < MIN_PULSE_INTERVAL_MS) {
+        return;  // zbyt szybko od poprzedniego — szum, nie realny impuls
+    }
     s_prev_pulse_ms = s_last_pulse_ms;
-    s_last_pulse_ms = millis();
+    s_last_pulse_ms = now;
     s_pulse_count++;
 }
 
@@ -26,6 +36,14 @@ void initEnergyMeter(uint16_t pulses_per_kwh) {
     attachInterrupt(digitalPinToInterrupt(ENERGY_PULSE_PIN), onEnergyPulse, FALLING);
     energyLoadFromFRAM();
     LOG_INFO("EnergyMeter: init, ppkwh=%d", s_pulses_per_kwh);
+}
+
+void pauseEnergyPulseInterrupt() {
+    detachInterrupt(digitalPinToInterrupt(ENERGY_PULSE_PIN));
+}
+
+void resumeEnergyPulseInterrupt() {
+    attachInterrupt(digitalPinToInterrupt(ENERGY_PULSE_PIN), onEnergyPulse, FALLING);
 }
 
 void updateEnergyMeter() {

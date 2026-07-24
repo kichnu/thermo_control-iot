@@ -85,6 +85,9 @@ void setup() {
     initFanController();
     initEnergyMeter(DEFAULT_PULSES_PER_KWH);
     thermoAlgorithm.begin();
+    setEnergyPulsesPerKwh(thermoAlgorithm.getConfig().pulses_per_kwh);  // ThermoConfig jest źródłem prawdy — nadpisuje ewentualnie rozjechaną kopię z EnergyStore
+    LOG_INFO("EnergyMeter: po synchronizacji z ThermoConfig — ppkwh=%u total_pulses=%u total_kwh=%.4f",
+             thermoAlgorithm.getConfig().pulses_per_kwh, getEnergyPulseCount(), getEnergyKwhTotal());
 
     initWiFi();
 
@@ -95,6 +98,11 @@ void setup() {
             heaterEmergencyOff();
             fanEmergencyOff();
             setSystemState(false);
+            pauseEnergyPulseInterrupt();
+        });
+        ArduinoOTA.onError([](ota_error_t error) {
+            LOG_WARNING("=== OTA ERROR (%d) — wznawiam licznik energii ===", (int)error);
+            resumeEnergyPulseInterrupt();
         });
         ArduinoOTA.begin();
         LOG_INFO("ArduinoOTA ready (port 3232)");
