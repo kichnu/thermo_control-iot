@@ -46,16 +46,26 @@ Full board diagram: `docs/ESP32-S3-Pico.png`.
 
 ## Algorithm
 
-Symmetric hysteresis around `target_temp` (25.0°C default), one threshold per channel:
+Hysteresis around `target_temp` (25.0°C default):
 
 ```
 Heater:  ON below target - heat_hyst (0.3°C),   OFF at target_temp
-Fan:     ON above target + cool_start (0.3°C),  100% above target + cool_full (1.0°C)
-         OFF at target_temp, floor fan_min_pct (30%) in between
+
+Fan uses a day/night thermal buffer (fan_on_point = target_temp + thermal_buffer,
+1.0°C default) instead of target_temp directly — lets daytime heat surplus
+accumulate instead of cooling it away immediately, so the heater works less at
+night:
+Fan:     ON above fan_on_point,                 100% above fan_on_point + cool_full (1.0°C)
+         OFF at fan_on_point - cool_start (0.3°C), floor fan_min_pct (30%) in between
 ```
 
+Validated: `thermal_buffer >= cool_start` (else OFF point dips below `target_temp`
+and fights the heater), `cool_full < alarm_delta_high` (else ALARM_HIGH could fire
+mid-ramp before the fan reaches 100%).
+
 Alarms (buzzer, see `src/algorithm/temp_algorithm.cpp`):
-- **TEMP_LOW / TEMP_HIGH** — temp outside `target ± alarm_delta_{low,high}` (2.0°C / 1.5°C default), self-heals once back in range
+- **TEMP_LOW** — temp below `target - alarm_delta_low` (2.0°C default), self-heals once back in range
+- **TEMP_HIGH** — temp above `fan_on_point + alarm_delta_high` (1.5°C default, measured from fan_on_point not target_temp), self-heals once back in range
 - **TREND** — heater ON continuously ≥ `trend_window_min` (60 min) without a `trend_alarm_delta` (0.2°C) rise — suspected heater/flow failure
 - **SENSOR_FAULT** — STS35 invalid past a threshold count — critical latch (heater/fan emergency-off), needs a manual reset (`/api/reset-sensor-fault`)
 
@@ -117,7 +127,6 @@ quotes if it contains shell-special characters (`#`, `$`, spaces).
 | `/api/system-toggle` | POST | Auto Mode / Service Mode |
 | `/api/energy`, `/api/energy-reset-day`, `/api/energy-reset-total` | GET/POST | Energy counter |
 | `/api/test/fan`, `/api/test/heater` | POST | Manual override (test) |
-| `/api/deviation/start`, `/api/deviation/end` | POST | Temporary deviation from target temp (C-09) |
 | `/api/verify-pin` | POST | Lock-PIN gate for settings edits |
 
 ## FRAM layout (8KB, `src/hardware/fram_constants.h`)
@@ -125,15 +134,15 @@ quotes if it contains shell-special characters (`#`, `$`, spaces).
 ```
 0x0000–0x0017   Magic ("THMO") + version
 0x0018–0x0417   AES-256 encrypted credentials (WiFi, admin password hash, device ID)
-0x0500–0x052D   ThermoConfig (44B) + checksum
-0x052E–0x0539   EnergyStore
-0x053A–0x054B   Ring-buffer metadata (hourly/daily/alarm — count/wptr/checksum)
+0x0500–0x053F   ThermoConfig (48B) + checksum, fixed 64B slot (~28% headroom for future fields)
+0x0540–0x054B   EnergyStore
+0x054C–0x055D   Ring-buffer metadata (hourly/daily/alarm — count/wptr/checksum)
+0x055E–0x05FF   free (~63% of this block, before the ring buffers below)
 0x0600–0x06BF   Hourly ring (24 records × 8B)
 0x06C0–0x122F   Daily ring (366 records × 8B)
 0x1230–...      Alarm-event ring
 0x1B90–0x1B9B   LockPin
-0x1BA0–0x1BAB   TempDeviationState
-0x1BB0–0x1CA1   DeviationReasonList
+0x1BA0–0x1CA1   free (was C-09 deviation state/reasons, removed 2026-07-24)
 0x1CA2–0x1CA9   EnergyResetInfo
 ```
 

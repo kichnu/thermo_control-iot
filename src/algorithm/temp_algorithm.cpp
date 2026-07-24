@@ -13,14 +13,31 @@ TempAlgorithm thermoAlgorithm;
 
 void TempAlgorithm::begin() {
     loadConfig();        // stosuje defaults wewnętrznie, jeśli FRAM pusty/niepoprawny
-    loadDeviationStateFromFRAM(_deviation);  // złą checksumę/świeży FRAM już zwraca active=0
     LOG_INFO("TempAlgorithm: init, target=%.1f heat_hyst=%.1f",
              _config.target_temp, _config.heat_hyst);
 }
 
 void TempAlgorithm::update() {
     if (isSystemDisabled()) {
+        _resumeResetPending = true;  // wracając z pauzy trzeba zresetować hardware, patrz niżej
         return;  // system wstrzymany — grzałka/fan pod ręcznym sterowaniem (test GUI)
+    }
+
+    if (_resumeResetPending) {
+        // Wyjście z Service Mode (ręczne /api/system-toggle lub 15-min auto-enable,
+        // config.cpp::checkSystemAutoEnable()) — w czasie pauzy grzałka/fan mogły
+        // zostać ręcznie nadpisane przez /api/test/heater|fan, BEZ synchronizacji
+        // _state/_fanActive. Bez tego resetu _updateHeater()'s gałąź OFF (warunek
+        // `_state == STATE_HEATING`) mogła nigdy się nie uruchomić — grzałka
+        // ręcznie zostawiona ON zostawała ON, bo algorytm "myślał", że już jest
+        // IDLE i nie miał powodu wysłać setHeaterOff(). Reset do IDLE/OFF daje
+        // znany punkt startowy, od którego histereza znów liczy poprawnie.
+        heaterEmergencyOff();
+        fanEmergencyOff();
+        _state = STATE_IDLE;
+        _fanActive = false;
+        _resumeResetPending = false;
+        LOG_INFO("TempAlgorithm: wznowienie po Service Mode — grzalka/fan zresetowane do OFF");
     }
 
     if (_sensorFaultLatched) {
@@ -71,6 +88,7 @@ void TempAlgorithm::_applyDefaults() {
     _config.trend_alarm_delta= DEFAULT_TREND_ALARM_DELTA;
     _config.temp_offset      = DEFAULT_TEMP_OFFSET;
     _config.heater_watt      = DEFAULT_HEATER_WATT;
+    _config.thermal_buffer   = DEFAULT_THERMAL_BUFFER;
     _config.pulses_per_kwh   = DEFAULT_PULSES_PER_KWH;
     _config.trend_window_min = DEFAULT_TREND_WINDOW_MIN;
     _config.is_configured    = 0;
@@ -97,22 +115,29 @@ void TempAlgorithm::_updateHeater(float temp) {
     }
 }
 
-// Analogicznie do grzałki, zwierciadlane: ON przy target + cool_start, OFF przy
-// target_temp (<=). W przeciwieństwie do grzałki fan nie jest on/off — potrzebuje
-// własnego latcha (_fanActive), bo prędkość między progami zależy od tego, czy fan
-// już pracuje (inaczej calcFanSpeed() nie wiedziałby, czy poniżej cool_start_abs
-// ma zwrócić 0, czy trzymać floor fan_min_pct).
+// Bufor termiczny dzień/noc (2026-07-24, user, patrz DEFAULT_THERMAL_BUFFER):
+// punkt ON przesunięty z target_temp na fan_on_point = target_temp +
+// thermal_buffer — pozwala tankować nadmiar ciepła w dzień zamiast go od razu
+// zbijać. cool_start dalej pełni rolę histerezy, ale liczonej OD fan_on_point
+// (OFF przy fan_on_point - cool_start), nie od target_temp — inaczej OFF
+// wypadałby poniżej target_temp i fan biłby się z grzałką w jej zakresie
+// pracy (patrz walidacja thermal_buffer >= cool_start w web_handlers.cpp).
+// Fan nie jest on/off — potrzebuje własnego latcha (_fanActive), bo prędkość
+// między progami zależy od tego, czy fan już pracuje (inaczej calcFanSpeed()
+// nie wiedziałby, czy poniżej fan_on_point ma zwrócić 0, czy trzymać floor
+// fan_min_pct).
 void TempAlgorithm::_updateFan(float temp) {
-    float cool_start_abs = _config.target_temp + _config.cool_start;
-    float cool_full_abs  = _config.target_temp + _config.cool_full;
+    float fan_on_point  = _config.target_temp + _config.thermal_buffer;
+    float fan_off_point = fan_on_point - _config.cool_start;
+    float cool_full_abs = fan_on_point + _config.cool_full;
 
-    if (!_fanActive && temp > cool_start_abs) {
+    if (!_fanActive && temp > fan_on_point) {
         _fanActive = true;
-    } else if (_fanActive && temp <= _config.target_temp) {
+    } else if (_fanActive && temp <= fan_off_point) {
         _fanActive = false;
     }
 
-    uint8_t spd = _fanActive ? calcFanSpeed(temp, cool_start_abs, cool_full_abs, _config.fan_min_pct) : 0;
+    uint8_t spd = _fanActive ? calcFanSpeed(temp, fan_on_point, cool_full_abs, _config.fan_min_pct) : 0;
     setFanSpeed(spd);
 
     if (_fanActive && _state != STATE_HEATING) _state = STATE_COOLING;
@@ -171,8 +196,14 @@ bool TempAlgorithm::_checkTrendAlarm(float temp) const {
 }
 
 void TempAlgorithm::_updateAlarms(float temp) {
+    // ALARM_HIGH liczony od fan_on_point (target_temp + thermal_buffer), nie od
+    // samego target_temp (2026-07-24, user) — inaczej próg alarmu wypadałby
+    // wewnątrz normalnego zakresu buforowania dziennego i strzelałby fałszywie
+    // w trakcie zwykłej, oczekiwanej pracy fana. ALARM_LOW bez zmian (thermal
+    // buffer dotyczy tylko strony ciepłej/dziennej).
+    float fan_on_point      = _config.target_temp + _config.thermal_buffer;
     float alarm_low_thresh  = _config.target_temp - _config.alarm_delta_low;
-    float alarm_high_thresh = _config.target_temp + _config.alarm_delta_high;
+    float alarm_high_thresh = fan_on_point + _config.alarm_delta_high;
 
     bool low_now  = (temp < alarm_low_thresh);
     bool high_now = (!low_now && temp > alarm_high_thresh);
@@ -196,15 +227,15 @@ void TempAlgorithm::_updateAlarms(float temp) {
         return;
     }
 
-    // Temp wróciła do zakresu — wyjdź ze stanu alarmowego
-    // TODO (2026-07, do sprawdzenia — NIE naprawiać bez osobnej decyzji): STATE_TREND_ALARM
-    // nie ma analogicznego auto-wyjścia niżej — gdy trend_now przejdzie true→false, _state
-    // zostaje STATE_TREND_ALARM na stałe (w przeciwieństwie do ALARM_LOW/HIGH, które co tick
-    // same wracają do IDLE). _alarm_flags/buzzer już się poprawnie czyszczą przez
-    // _setAlarmFlag(), ale _state/getStateString() w GUI zostaje błędny. Po usunięciu
-    // przycisku "Reset automatu stanów" nie ma już żadnego sposobu, by to ręcznie odblokować —
-    // trend powinien działać tak samo jak pozostałe alarmy (self-heal do IDLE).
-    if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH) {
+    // Temp wróciła do zakresu / trend ustąpił — wyjdź ze stanu alarmowego.
+    // STATE_TREND_ALARM dołączone tu (2026-07-24, fix zgłoszonego buga): bez tego
+    // _state zostawał na "TREND_ALARM" bezterminowo w GUI, mimo że _alarm_flags/
+    // buzzer już się poprawnie czyściły przez _setAlarmFlag() niżej — bo
+    // _checkTrendAlarm() wymaga _state==STATE_HEATING, więc po pierwszym
+    // zadziałaniu (state->TREND_ALARM) warunek trend_now i tak od razu wypada
+    // false na kolejnym cyklu; reset do IDLE tutaj tylko koryguje wyświetlaną
+    // etykietę stanu, zgodnie z tym co już się faktycznie dzieje z flagą/buzzerem.
+    if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH || _state == STATE_TREND_ALARM) {
         _state = STATE_IDLE;
     }
 
@@ -306,45 +337,7 @@ bool TempAlgorithm::saveConfig() {
 
 bool TempAlgorithm::setConfig(const ThermoConfig& cfg) {
     _config = cfg;
-    bool ok = saveConfig();
-    if (_deviation.active) {
-        // Bezpośrednia edycja z ukrytego panelu podczas aktywnego odstępstwa —
-        // to nowa normalność, nie kontynuacja starego baseline (user, 2026-07-15).
-        _deviation.active = 0;
-        saveDeviationStateToFRAM(_deviation);
-    }
-    return ok;
-}
-
-bool TempAlgorithm::startDeviation(float newTargetTemp, uint8_t reasonIdx) {
-    if (!_deviation.active) {
-        // Snapshot TYLKO przy przejściu false→true, żeby seryjne zmiany
-        // 25→26→24 zawsze wracały do prawdziwego baseline, nie do ostatniego
-        // odstępstwa.
-        _deviation.baseline_temp = _config.target_temp;
-    }
-    _config.target_temp = newTargetTemp;
-    bool ok = saveConfig();  // NIE setConfig() — nie wolno samo-skasować odstępstwa
-
-    _deviation.since_ts  = (uint32_t)getUnixTimestamp();
-    _deviation.reason_idx = reasonIdx;
-    _deviation.active    = 1;
-    ok = saveDeviationStateToFRAM(_deviation) && ok;
-
-    LOG_INFO("Deviation started: target=%.1f (baseline=%.1f) reason_idx=%u",
-             _config.target_temp, _deviation.baseline_temp, reasonIdx);
-    return ok;
-}
-
-bool TempAlgorithm::endDeviation() {
-    _config.target_temp = _deviation.baseline_temp;
-    bool ok = saveConfig();  // NIE setConfig()
-
-    _deviation.active = 0;
-    ok = saveDeviationStateToFRAM(_deviation) && ok;
-
-    LOG_INFO("Deviation ended: target restored to %.1f", _config.target_temp);
-    return ok;
+    return saveConfig();
 }
 
 void TempAlgorithm::muteActiveAlarms() {

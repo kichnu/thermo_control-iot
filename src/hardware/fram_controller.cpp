@@ -285,68 +285,8 @@ bool loadEnergyResetInfoFromFRAM(EnergyResetInfo& info) {
 }
 
 // ===============================
-// C-09 — odstępstwo od temp. zadanej + lock-PIN edycji GUI (checksum
-// wbudowany w struct, jak EnergyStore — spójny prymityw w tym pliku)
+// Lock-PIN edycji GUI (checksum wbudowany w struct, jak EnergyStore)
 // ===============================
-
-bool saveDeviationStateToFRAM(const TempDeviationState& state) {
-    if (!framInitialized) return false;
-
-    TempDeviationState tmp = state;
-    size_t checksum_offset = offsetof(TempDeviationState, checksum);
-    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
-
-    framWrite(FRAM_ADDR_DEVIATION_STATE, &tmp, sizeof(TempDeviationState));
-    return true;
-}
-
-bool loadDeviationStateFromFRAM(TempDeviationState& state) {
-    if (!framInitialized) return false;
-
-    TempDeviationState tmp;
-    fram.read(FRAM_ADDR_DEVIATION_STATE, (uint8_t*)&tmp, sizeof(TempDeviationState));
-
-    size_t checksum_offset = offsetof(TempDeviationState, checksum);
-    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
-    if (calc != tmp.checksum) {
-        // Świeży/uszkodzony FRAM — bezpieczny default: brak aktywnego odstępstwa.
-        state = TempDeviationState{};
-        state.active = 0;
-        return false;
-    }
-
-    state = tmp;
-    return true;
-}
-
-bool saveDeviationReasonsToFRAM(const DeviationReasonList& list) {
-    if (!framInitialized) return false;
-
-    DeviationReasonList tmp = list;
-    size_t checksum_offset = offsetof(DeviationReasonList, checksum);
-    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
-
-    framWrite(FRAM_ADDR_DEVIATION_REASONS, &tmp, sizeof(DeviationReasonList));
-    return true;
-}
-
-bool loadDeviationReasonsFromFRAM(DeviationReasonList& list) {
-    if (!framInitialized) return false;
-
-    DeviationReasonList tmp;
-    fram.read(FRAM_ADDR_DEVIATION_REASONS, (uint8_t*)&tmp, sizeof(DeviationReasonList));
-
-    size_t checksum_offset = offsetof(DeviationReasonList, checksum);
-    uint16_t calc = calculateChecksum((const uint8_t*)&tmp, checksum_offset);
-    if (calc != tmp.checksum) {
-        // Świeży/uszkodzony FRAM — wszystkie sloty puste, frontend pokaże "brak".
-        list = DeviationReasonList{};
-        return false;
-    }
-
-    list = tmp;
-    return true;
-}
 
 bool saveLockPinToFRAM(const LockPin& pin) {
     if (!framInitialized) return false;

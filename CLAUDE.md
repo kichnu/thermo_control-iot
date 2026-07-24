@@ -103,17 +103,34 @@ Located in `algorithm/temp_algorithm.cpp`, states in `algorithm_config.h`:
 
 ```
 STATE_IDLE ⇄ STATE_HEATING   (SSR ON below target - heat_hyst, OFF at target_temp)
-STATE_IDLE ⇄ STATE_COOLING   (fan ON above target + cool_start, OFF at target_temp)
-STATE_ALARM_LOW / STATE_ALARM_HIGH  — temp outside target ± alarm_delta_{low,high}, self-heals
-STATE_TREND_ALARM            — heater ON continuously ≥ trend_window_min without enough rise
-                                (known bug: doesn't self-heal back to IDLE, see code comment)
+STATE_IDLE ⇄ STATE_COOLING   (fan ON above fan_on_point = target + thermal_buffer,
+                               OFF at fan_on_point - cool_start — see below)
+STATE_ALARM_LOW / STATE_ALARM_HIGH  — temp outside [target - alarm_delta_low, fan_on_point + alarm_delta_high], self-heals
+STATE_TREND_ALARM            — heater ON continuously ≥ trend_window_min without enough rise,
+                                self-heals (fixed 2026-07-24 — used to stick in GUI, see code comment)
 STATE_SENSOR_FAULT           — STS35 invalid past threshold, LATCHED — heater/fan
                                 emergency-off, needs manual reset (resetSensorFaultLatch())
 ```
 
+Fan uses a day/night thermal buffer (2026-07-24, replaced the old symmetric
+"ON at target+cool_start, OFF at target_temp" scheme and the separate C-09
+deviation feature, see `docs/FEATURES_REGISTRY.md` C-09/C-10): `fan_on_point =
+target_temp + thermal_buffer` — lets daytime heat surplus accumulate instead of
+immediately cooling it away, so the heater has less work at night. `cool_start`
+is now a hysteresis width *below* `fan_on_point` (OFF at `fan_on_point -
+cool_start`), `cool_full` a width *above* it (100% at `fan_on_point +
+cool_full`), and `alarm_delta_high` is now measured from `fan_on_point` too
+(not `target_temp`) — otherwise ALARM_HIGH could fire mid-ramp before the fan
+even reaches 100%. Validated server-side (`web_handlers.cpp`):
+`thermal_buffer >= cool_start` (else the OFF point would dip below
+`target_temp` and fight the heater) and `cool_full < alarm_delta_high`.
+Heater side (`heat_hyst`) unchanged. A planned follow-up (not yet
+implemented): color the `#temp` GUI element as a quiet warning while inside
+the buffer zone.
+
 Key defaults in `algorithm_config.h`:
 - `DEFAULT_TARGET_TEMP` 25.0°C, `DEFAULT_HEAT_HYST` 0.3°C, `DEFAULT_COOL_START` 0.3°C,
-  `DEFAULT_COOL_FULL` 1.0°C, `DEFAULT_FAN_MIN_PCT` 30%
+  `DEFAULT_COOL_FULL` 1.0°C, `DEFAULT_THERMAL_BUFFER` 1.0°C, `DEFAULT_FAN_MIN_PCT` 30%
 - `DEFAULT_ALARM_DELTA_LOW` 2.0°C, `DEFAULT_ALARM_DELTA_HIGH` 1.5°C
 - `DEFAULT_TREND_ALARM_DELTA` 0.2°C over `DEFAULT_TREND_WINDOW_MIN` 60 min
 
@@ -126,15 +143,17 @@ Design rationale (ON/OFF+SSR over PID, SSR over mechanical relay) in
 SPI (MB85RS64V, 8KB, 0x0000–0x1FFF). Defined in `hardware/fram_constants.h`:
 - `0x0000–0x0017`: magic ("THMO") + version
 - `0x0018–0x0417`: AES-256 encrypted credentials (WiFi, admin password hash, device ID)
-- `0x0500–0x052D`: `ThermoConfig` (44B) + checksum
-- `0x052E–0x0539`: `EnergyStore`
-- `0x053A–0x054B`: ring-buffer metadata (hourly/daily/alarm — count/wptr/checksum)
+- `0x0500–0x053F`: `ThermoConfig` (48B, grew from 44B 2026-07-24 — added `thermal_buffer`) +
+  checksum, in a fixed 64B slot (~28% headroom reserved for future fields without
+  reshuffling everything downstream again — see `fram_constants.h` comment)
+- `0x0540–0x054B`: `EnergyStore`
+- `0x054C–0x055D`: ring-buffer metadata (hourly/daily/alarm — count/wptr/checksum)
+- `0x055E–0x05FF`: free (~63% of the config block, before the ring buffers below)
 - `0x0600–0x06BF`: hourly ring (24 × 8B)
 - `0x06C0–0x122F`: daily ring (366 × 8B)
 - `0x1230–...`: alarm-event ring
 - `0x1B90–0x1B9B`: `LockPin`
-- `0x1BA0–0x1BAB`: `TempDeviationState`
-- `0x1BB0–0x1CA1`: `DeviationReasonList`
+- `0x1BA0–0x1CA1`: free (was C-09 `TempDeviationState`/`DeviationReasonList`, removed 2026-07-24)
 - `0x1CA2–0x1CA9`: `EnergyResetInfo`
 
 ### Hardware Pin Configuration (Waveshare ESP32-S3-Pico)
@@ -170,8 +189,6 @@ POST /api/reset-sensor-fault              clears STATE_SENSOR_FAULT latch
 POST /api/system-toggle                   Auto Mode / Service Mode (15-min auto re-enable)
 GET|POST /api/energy | /api/energy-reset-day | /api/energy-reset-total
 POST /api/test/fan | /api/test/heater     manual override (test)
-POST /api/deviation/start | /api/deviation/end   temporary deviation from target_temp (C-09)
-GET|POST /api/deviation-reasons
 POST /api/verify-pin                      lock-PIN gate for settings edits
 ```
 

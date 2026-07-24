@@ -46,7 +46,8 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 | C-06 | Detekcja szybkiego spadku temp (awaria grzałki)     | [v1]   | Δ > X°C / 10 min → alarm trend           |
 | C-07 | Upgrade do PI time-proportioning (SSR)              | [ ]    | firmware only, bez zmian HW, gdy zajdzie |
 | C-08 | Auto Mode / Service Mode (rename + UX)              | [v1]   | 2026-07: to samo co isSystemDisabled(), etykieta jak w dolewce |
-| C-09 | Tryb warunkowego odchylenia temp. (sytuacje skrajne)| [ ]    | 2026-07: DO DYSKUSJI. User decyduje o wielkości odchyłki, ale GUI musi to jawnie "krzyczeć" — nie naginać ustawień po cichu. Niezaprojektowane. |
+| C-09 | Tryb warunkowego odchylenia temp. (sytuacje skrajne)| [ ]    | Zaimplementowane 2026-07-15, USUNIĘTE 2026-07-24 — zastąpione przez `thermal_buffer` (bufor termiczny dzień/noc, patrz C-10), zbędne obok niego jako drugi mechanizm przesuwający efektywną temperaturę. |
+| C-10 | Bufor termiczny dzień/noc (`thermal_buffer`)        | [v1]   | 2026-07-24: fan ON dopiero od target+thermal_buffer, żeby bankować nadmiar ciepła z dnia na noc; ALARM_HIGH przeliczony względem tego samego punktu. Kolorowe ostrzeżenie na `#temp` przy wejściu w strefę bufora — zaplanowane, jeszcze niezaimplementowane. |
 
 ---
 

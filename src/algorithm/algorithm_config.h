@@ -27,16 +27,24 @@
 // ============================================================
 #define DEFAULT_TARGET_TEMP         25.0f
 #define DEFAULT_HEAT_HYST           0.3f    // SSR ON poniżej T - X, OFF przy T (patrz MIN_HYSTERESIS_OFFSET)
-#define DEFAULT_COOL_START          0.3f    // fan ON powyżej T + X, OFF przy T
-#define DEFAULT_COOL_FULL           1.0f    // fan 100% powyżej T + X
+#define DEFAULT_COOL_START          0.3f    // histereza OFF: fan OFF przy fan_on_point - cool_start (patrz thermal_buffer)
+#define DEFAULT_COOL_FULL           1.0f    // fan 100% powyżej fan_on_point + X (patrz thermal_buffer)
 #define DEFAULT_FAN_MIN_PCT         30      // floor rampy fana (poniżej fan się nie rusza / jest nieefektywny)
+// Bufor termiczny dzień/noc (2026-07-24, user): fan ON dopiero od
+// target_temp + thermal_buffer (nie od samego target_temp) — pozwala
+// wykorzystać nadmiar ciepła zaakumulowany w dzień zamiast od razu go
+// zbijać, żeby grzałka miała mniej pracy w nocy. cool_start liczy się teraz
+// OD tego punktu (OFF przy fan_on_point - cool_start), podobnie cool_full
+// (100% przy fan_on_point + cool_full) i alarm_delta_high (ALARM_HIGH przy
+// fan_on_point + alarm_delta_high) — patrz _updateFan()/_updateAlarms().
+#define DEFAULT_THERMAL_BUFFER      1.0f
 
 // Przycisk "Fan ON" w GUI (test manualny, karta System Control) — jaki % ma
 // ustawić jednym kliknięciem. Mirror tej wartości jest w JS (html_pages.cpp,
 // FAN_MANUAL_DEFAULT_PCT) — brak mechanizmu wstrzykiwania #define do PROGMEM.
 #define FAN_MANUAL_DEFAULT_PCT      50
 #define DEFAULT_ALARM_DELTA_LOW     2.0f    // ALARM poniżej T - X
-#define DEFAULT_ALARM_DELTA_HIGH    1.5f    // ALARM powyżej T + X
+#define DEFAULT_ALARM_DELTA_HIGH    1.5f    // ALARM powyżej (T + thermal_buffer) + X — patrz DEFAULT_THERMAL_BUFFER
 // Trend: grzałka ON od co najmniej trend_window_min minut, a temperatura nie
 // wzrosła o trend_alarm_delta — czyli grzałka "pracuje", ale nieskutecznie
 // (przepalony element, brak zasilania mimo sterowania). 0.2°C, bo 0.1°C to już
@@ -91,19 +99,23 @@ enum AlgorithmState : uint8_t {
 struct ThermoConfig {
     float    target_temp;       // temperatura zadana [°C]
     float    heat_hyst;         // SSR ON gdy temp < target - heat_hyst; OFF gdy temp >= target_temp
-    float    cool_start;        // fan ON gdy temp > target + cool_start; OFF gdy temp <= target_temp
-    float    cool_full;         // fan 100% gdy temp > target + cool_full
+    // Fan: punkt odniesienia to fan_on_point = target_temp + thermal_buffer (NIE
+    // sam target_temp, patrz thermal_buffer niżej) — cool_start/cool_full liczone
+    // OD fan_on_point, nie od target_temp. Patrz TempAlgorithm::_updateFan().
+    float    cool_start;        // fan OFF gdy temp <= fan_on_point - cool_start (histereza)
+    float    cool_full;         // fan 100% gdy temp > fan_on_point + cool_full
     float    alarm_delta_low;   // ALARM gdy temp < target - X
-    float    alarm_delta_high;  // ALARM gdy temp > target + X
+    float    alarm_delta_high;  // ALARM gdy temp > fan_on_point + X (patrz thermal_buffer)
     float    trend_alarm_delta; // wymagany wzrost temp. [°C] w oknie trend_window_min, przy ciągłym grzaniu
     float    temp_offset;       // kalibracja czujnika STS35 [°C]
-    float    heater_watt;       // moc znamionowa grzałek [W]
+    float    heater_watt;       // nieużywane — zarezerwowane pole (GUI: "Reserved")
+    float    thermal_buffer;    // bufor dzień/noc: fan ON dopiero od target_temp + thermal_buffer, patrz DEFAULT_THERMAL_BUFFER
     uint16_t pulses_per_kwh;    // konfiguracja miernika energii
     uint16_t trend_window_min;  // długość okna detekcji trendu [min], patrz trend_alarm_delta
     uint8_t  is_configured;     // THERMO_CONFIG_MAGIC = ważna konfiguracja
     uint8_t  fan_min_pct;       // floor rampy fana [%] (0-100), patrz DEFAULT_FAN_MIN_PCT
 };
-static_assert(sizeof(ThermoConfig) == 44, "ThermoConfig must be 44 bytes"); // 9 float + 2×u16 + 2×u8 = 44B (padded)
+static_assert(sizeof(ThermoConfig) == 48, "ThermoConfig must be 48 bytes"); // 10 float + 2×u16 + 2×u8 = 48B (padded) — thermal_buffer dodane 2026-07-24, 44B→48B
 
 // ============================================================
 // REKORD ŚREDNIEJ TEMPERATURY — używany przez bufor godzinowy (24 rekordy,
@@ -161,38 +173,11 @@ struct EnergyResetInfo {
 };
 static_assert(sizeof(EnergyResetInfo) == 8, "EnergyResetInfo must be 8 bytes");
 
-// ============================================================
-// C-09 — odstępstwo od temperatury zadanej (2026-07-15)
-// Mechanizm PRZESUWA realnie ThermoConfig.target_temp (algorytm nie zyskuje
-// żadnej nowej logiki — heater/fan/alarmy dalej liczą względem target_temp
-// jak dziś). Stan trwałości (aktywne/nie, powód, od kiedy, baseline do
-// powrotu) persystowany osobno w FRAM, bo może trwać dniami — restart nie
-// może cichcem go skasować. Powód wybierany z edytowalnej listy (user sam
-// wypełnia sloty), nie sztywny enum. Bezpośrednia edycja target_temp przez
-// ukryty panel ThermoConfig (TempAlgorithm::setConfig()) kończy aktywne
-// odstępstwo — traktowana jako nowa normalność, nie kontynuacja starego
-// baseline.
-// ============================================================
-#define DEVIATION_REASON_COUNT  8
-
-struct TempDeviationState {
-    float    baseline_temp;  // target_temp sprzed odstępstwa — cel endDeviation()
-    uint32_t since_ts;       // Unix UTC startu odstępstwa
-    uint8_t  reason_idx;     // index w DeviationReasonList (0..DEVIATION_REASON_COUNT-1)
-    uint8_t  active;         // 0/1
-    uint16_t checksum;
-};
-static_assert(sizeof(TempDeviationState) == 12, "TempDeviationState must be 12 bytes");
-
-struct DeviationReasonEntry {
-    char text[30];  // pusty string = slot nieużywany
-};
-
-struct DeviationReasonList {
-    DeviationReasonEntry reasons[DEVIATION_REASON_COUNT];
-    uint16_t checksum;
-};
-static_assert(sizeof(DeviationReasonList) == 242, "DeviationReasonList must be 242 bytes");
+// C-09 (odstępstwo od temperatury zadanej, 2026-07-15 → usunięte 2026-07-24):
+// zastąpione przez thermal_buffer (patrz ThermoConfig/DEFAULT_THERMAL_BUFFER
+// wyżej) — nie kolidowały ze sobą strukturalnie, ale drugi mechanizm robiący
+// podobną rzecz (przesunięcie efektywnej temp. wokół której działa algorytm)
+// był zbędny. FRAM_ADDR_DEVIATION_STATE/REASONS w fram_constants.h też usunięte.
 
 // ============================================================
 // LOCK PIN — blokada edycji GUI (osobna od hasła logowania), 2026-07-15.

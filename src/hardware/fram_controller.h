@@ -73,19 +73,10 @@ void clearDailyHistory();
 void clearAlarmEvents();
 
 // ===============================
-// C-09 — odstępstwo od temp. zadanej + lock-PIN edycji GUI (2026-07-15)
-// Checksum wbudowany w struct, jak EnergyStore.
+// Lock-PIN edycji GUI (2026-07-15) — checksum wbudowany w struct, jak EnergyStore.
 // ===============================
 
-struct TempDeviationState;
-struct DeviationReasonList;
 struct LockPin;
-
-bool saveDeviationStateToFRAM(const TempDeviationState& state);
-bool loadDeviationStateFromFRAM(TempDeviationState& state);   // złą checksumę traktuje jako "brak odstępstwa" (active=0)
-
-bool saveDeviationReasonsToFRAM(const DeviationReasonList& list);
-bool loadDeviationReasonsFromFRAM(DeviationReasonList& list); // złą checksumę traktuje jako "wszystkie sloty puste"
 
 bool saveLockPinToFRAM(const LockPin& pin);
 bool loadLockPinFromFRAM(LockPin& pin);                       // złą checksumę traktuje jako "brak PIN-u" — lazy-init do "1234"

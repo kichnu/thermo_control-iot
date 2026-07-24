@@ -22,27 +22,36 @@
 #define FRAM_CREDENTIALS_ADDR   0x0018
 #define FRAM_CREDENTIALS_SIZE   1024
 
-// 0x0500–0x054B: System config + metadane 3 ringów
-// Uwaga: ThermoConfig realnie 44B (9 float+2×u16+2×u8, padded), EnergyStore
+// 0x0500–0x05FF: System config + metadane 3 ringów
+// Uwaga: ThermoConfig realnie 48B (10 float+2×u16+2×u8, padded), EnergyStore
 // realnie 12B (checksum wbudowany w struct) — static_assert w algorithm_config.h.
-// (2026-07-14: ThermoConfig zyskało trend_window_min, 40B→44B — adresy poniżej
-// przesunięte o +4B, stary zapis odrzuci się przez checksum mismatch.)
-#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (44B)
-#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x052C  // 2B checksum
-#define FRAM_ADDR_ENERGY_STORE      0x052E  // EnergyStore (12B, checksum wbudowany)
+// (2026-07-14: ThermoConfig zyskało trend_window_min, 40B→44B. 2026-07-24:
+// zyskało thermal_buffer, 44B→48B — adresy poniżej przesunięte, stary zapis
+// odrzuci się przez checksum mismatch — patrz [[fram_magic_byte_gotcha]]: to
+// też kasuje EnergyStore/hourly/daily/alarm meta do zera, bo ich adresy też
+// się przesuwają; ring bufferów DANE zostają nietknięte, tylko ich metadane
+// count/wptr się resetują. Żeby NIE powtarzać tego przy każdej kolejnej zmianie
+// ThermoConfig: od 2026-07-24 struct dostaje stały slot 0x40 (64B) zamiast być
+// pakowany "na styk" — 48B+2B checksum = 50B użyte, 14B rezerwy (~28%) na
+// przyszłe pola BEZ przesuwania EnergyStore/ringów. Analogicznie zostaje spory
+// margines (162B, ~63% tego bloku) między metadanymi a FRAM_ADDR_HOURLY_BUFFER.)
+#define FRAM_ADDR_THERMO_CONFIG     0x0500  // ThermoConfig (48B, w slocie 64B)
+#define FRAM_ADDR_THERMO_CFG_CHKSUM 0x0530  // 2B checksum
+// 0x0532–0x053F: rezerwa (14B) na przyszły wzrost ThermoConfig
+#define FRAM_ADDR_ENERGY_STORE      0x0540  // EnergyStore (12B, checksum wbudowany)
 
 // Metadane ring bufferów (count/wptr/checksum, 6B każdy — wzorzec jak w
 // pierwotnym ring bufferze event-driven, patrz calculateChecksum(wptr+count))
-#define FRAM_ADDR_HOURLY_COUNT      0x053A  // 2B
-#define FRAM_ADDR_HOURLY_WPTR       0x053C  // 2B
-#define FRAM_ADDR_HOURLY_META_CHKSUM 0x053E // 2B
-#define FRAM_ADDR_DAILY_COUNT       0x0540  // 2B
-#define FRAM_ADDR_DAILY_WPTR        0x0542  // 2B
-#define FRAM_ADDR_DAILY_META_CHKSUM 0x0544  // 2B
-#define FRAM_ADDR_ALARM_COUNT       0x0546  // 2B
-#define FRAM_ADDR_ALARM_WPTR        0x0548  // 2B
-#define FRAM_ADDR_ALARM_META_CHKSUM 0x054A  // 2B
-// 0x054C–0x05FF: gap (180B rezerwa)
+#define FRAM_ADDR_HOURLY_COUNT      0x054C  // 2B
+#define FRAM_ADDR_HOURLY_WPTR       0x054E  // 2B
+#define FRAM_ADDR_HOURLY_META_CHKSUM 0x0550 // 2B
+#define FRAM_ADDR_DAILY_COUNT       0x0552  // 2B
+#define FRAM_ADDR_DAILY_WPTR        0x0554  // 2B
+#define FRAM_ADDR_DAILY_META_CHKSUM 0x0556  // 2B
+#define FRAM_ADDR_ALARM_COUNT       0x0558  // 2B
+#define FRAM_ADDR_ALARM_WPTR        0x055A  // 2B
+#define FRAM_ADDR_ALARM_META_CHKSUM 0x055C  // 2B
+// 0x055E–0x05FF: gap (162B rezerwa, ~63% tego bloku) przed FRAM_ADDR_HOURLY_BUFFER
 
 // 0x0600–0x06BF: Ring godzinowy — HOURLY_BUFFER_CAPACITY(24) × 8B = 192B
 // rolling 24h, nadpisywany co godzinę (nawet niepełną — patrz pamięć projektu,
@@ -61,12 +70,10 @@
 #define FRAM_ADDR_ALARM_BUFFER      0x1230
 #define ALARM_RECORD_SIZE           8       // sizeof(AlarmEvent)
 
-// 0x1B90–0x1CA1: C-09 (odstępstwo od temp. zadanej) + lock-PIN edycji GUI
-// (2026-07-15) — patrz LockPin/TempDeviationState/DeviationReasonList w
-// algorithm_config.h. Reszta wolnego bloku (~862B) zostaje rezerwą.
+// 0x1B90–0x1B9B: lock-PIN edycji GUI (2026-07-15) — patrz LockPin w
+// algorithm_config.h. 0x1BA0–0x1CA1 zwolnione (2026-07-24, C-09 usunięte —
+// zastąpione przez ThermoConfig.thermal_buffer), wraca do rezerwy.
 #define FRAM_ADDR_LOCK_PIN           0x1B90  // LockPin (12B)
-#define FRAM_ADDR_DEVIATION_STATE    0x1BA0  // TempDeviationState (12B)
-#define FRAM_ADDR_DEVIATION_REASONS  0x1BB0  // DeviationReasonList (242B)
 
 // 0x1CA2–0x1CA9: EnergyResetInfo (8B) — timestamp kasowania licznika total
 // (2026-07-18), osobno od EnergyStore (0x052E) żeby nie przesuwać layoutu

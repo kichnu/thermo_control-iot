@@ -42,26 +42,19 @@ public:
     bool           loadConfig();
     bool           saveConfig();
     const ThermoConfig& getConfig() const  { return _config; }
-    // Bezpośrednia edycja z ukrytego panelu — jeśli odstępstwo (patrz niżej) jest
-    // akurat aktywne, kończy je (nowa normalność, nie kontynuacja starego baseline).
     bool           setConfig(const ThermoConfig& cfg);
-
-    // C-09 — odstępstwo od temperatury zadanej (patrz algorithm_config.h:
-    // TempDeviationState). startDeviation/endDeviation mutują target_temp
-    // BEZPOŚREDNIO (nie przez setConfig()!), żeby nie samo-skasować odstępstwo,
-    // które właśnie zakładają.
-    const TempDeviationState& getDeviationState() const { return _deviation; }
-    bool           startDeviation(float newTargetTemp, uint8_t reasonIdx);
-    bool           endDeviation();
 
 private:
     AlgorithmState   _state       = STATE_IDLE;
     uint8_t          _alarm_flags = 0;   // aktywne TERAZ (live, nie latchowane)
     uint8_t          _muted_flags = 0;   // wyciszone przez muteActiveAlarms(), per-epizod
     ThermoConfig       _config    = {};
-    TempDeviationState _deviation = {};  // C-09, patrz getDeviationState()/startDeviation()/endDeviation()
-    bool             _fanActive   = false;  // latch: ON przy temp>cool_start_abs, OFF przy temp<=target_temp
+    bool             _fanActive   = false;  // latch: ON przy temp>fan_on_point, OFF przy temp<=fan_off_point (patrz _updateFan)
     bool             _sensorFaultLatched = false;
+    // Ustawiane w update() przy każdym cyklu, gdy system jest wstrzymany (Service
+    // Mode) — sygnalizuje, że przy najbliższym wznowieniu trzeba zresetować
+    // grzałkę/fan do znanego stanu (patrz update() w .cpp, dlaczego).
+    bool             _resumeResetPending = false;
 
     // Akumulator godzinowy — TYLKO RAM, flushowany do FRAM przy zmianie godziny.
     float            _hourAccumSum   = 0.0f;

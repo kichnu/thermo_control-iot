@@ -22,13 +22,7 @@
 //   GET  /api/energy
 //   POST /api/energy-reset-day
 //   POST /api/energy-reset-total  (kasowanie licznika total — gating PIN po stronie GUI, .lockable-btn)
-//
-// C-09 — odstępstwo od temp. zadanej + lock-PIN edycji GUI (2026-07-15):
-//   POST /api/deviation/start   (target_temp, reason_idx)
-//   POST /api/deviation/end
-//   GET  /api/deviation-reasons
-//   POST /api/deviation-reasons (reason0..reason7)
-//   POST /api/verify-pin        (pin) — drugi zamek NA edycję, nie zamiennik loginu
+//   POST /api/verify-pin          (pin) — lock-PIN edycji GUI, drugi zamek NA edycję, nie zamiennik loginu
 // ============================================================
 
 void registerThermoHandlers(AsyncWebServer& server);
@@ -58,12 +52,6 @@ void handleTestHeater(AsyncWebServerRequest* request);
 // pracy nad GUI przed zebraniem prawdziwej historii przez urządzenie.
 void handleTestSeedHistory(AsyncWebServerRequest* request);
 void handleTestClearHistory(AsyncWebServerRequest* request);
-
-// C-09 — odstępstwo od temp. zadanej (patrz TempAlgorithm::startDeviation/endDeviation)
-void handleDeviationStart(AsyncWebServerRequest* request);
-void handleDeviationEnd(AsyncWebServerRequest* request);
-void handleGetDeviationReasons(AsyncWebServerRequest* request);
-void handleSetDeviationReasons(AsyncWebServerRequest* request);
 
 // Lock-PIN edycji GUI (osobny od hasła logowania) — drugi zamek na zapisy
 void handleVerifyPin(AsyncWebServerRequest* request);

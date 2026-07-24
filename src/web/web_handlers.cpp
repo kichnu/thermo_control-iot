@@ -36,10 +36,6 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/test/heater",      HTTP_POST, requireAuth(handleTestHeater));
     server.on("/api/test/seed-history",  HTTP_POST, requireAuth(handleTestSeedHistory));
     server.on("/api/test/clear-history", HTTP_POST, requireAuth(handleTestClearHistory));
-    server.on("/api/deviation/start",   HTTP_POST, requireAuth(handleDeviationStart));
-    server.on("/api/deviation/end",     HTTP_POST, requireAuth(handleDeviationEnd));
-    server.on("/api/deviation-reasons", HTTP_GET,  requireAuth(handleGetDeviationReasons));
-    server.on("/api/deviation-reasons", HTTP_POST, requireAuth(handleSetDeviationReasons));
     server.on("/api/verify-pin",        HTTP_POST, requireAuth(handleVerifyPin));
 }
 
@@ -54,16 +50,6 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["system_disabled"] = isSystemDisabled();
     doc["energy_kwh_today"]= getEnergyKwhToday();
     doc["wifi_connected"]  = isWiFiConnected();
-
-    // C-09 — odstępstwo od temp. zadanej. reason_idx (nie rozwiązany tekst) —
-    // frontend rozwiązuje go z /api/deviation-reasons, wczytanego raz przy
-    // starcie strony (ten sam wzorzec co sharedNotes w GUI dozownika), żeby
-    // nie czytać FRAM co 5s razem z resztą refresh().
-    const TempDeviationState& dev = thermoAlgorithm.getDeviationState();
-    doc["deviation_active"]       = (bool)dev.active;
-    doc["deviation_reason_idx"]   = dev.reason_idx;
-    doc["deviation_since"]        = dev.since_ts;
-    doc["deviation_baseline_temp"]= dev.baseline_temp;
 
     String out;
     serializeJson(doc, out);
@@ -139,6 +125,7 @@ void handleGetThermoConfig(AsyncWebServerRequest* request) {
     doc["trend_window_min"]  = cfg.trend_window_min;
     doc["temp_offset"]       = cfg.temp_offset;
     doc["heater_watt"]       = cfg.heater_watt;
+    doc["thermal_buffer"]    = cfg.thermal_buffer;
     doc["pulses_per_kwh"]    = cfg.pulses_per_kwh;
     String out;
     serializeJson(doc, out);
@@ -163,6 +150,7 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     applyFloatParam(request, "trend_alarm_delta", cfg.trend_alarm_delta);
     applyFloatParam(request, "temp_offset",       cfg.temp_offset);
     applyFloatParam(request, "heater_watt",       cfg.heater_watt);
+    applyFloatParam(request, "thermal_buffer",    cfg.thermal_buffer);
     if (request->hasParam("pulses_per_kwh", true)) {
         cfg.pulses_per_kwh = (uint16_t)request->getParam("pulses_per_kwh", true)->value().toInt();
     }
@@ -176,13 +164,17 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
         cfg.fan_min_pct = (uint8_t)v;
     }
 
-    // Walidacja: progi muszą zachowywać sensowną kolejność fizyczną
-    if (cfg.cool_full <= cfg.cool_start) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"cool_full must be > cool_start\"}");
+    // Walidacja: progi muszą zachowywać sensowną kolejność fizyczną.
+    // cool_full i cool_start liczą się teraz w PRZECIWNE strony od fan_on_point
+    // (cool_start w dół do fan_off_point, cool_full w górę do 100%, patrz
+    // _updateFan()) — nie ma już bezpośredniej relacji cool_full > cool_start,
+    // stąd tylko osobny dolny próg na cool_full poniżej.
+    if (cfg.cool_full <= 0.0f) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"cool_full must be > 0\"}");
         return;
     }
-    if (cfg.alarm_delta_low <= cfg.heat_hyst || cfg.alarm_delta_high <= cfg.cool_start) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"alarm thresholds must exceed control thresholds\"}");
+    if (cfg.alarm_delta_low <= cfg.heat_hyst) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"alarm_delta_low must exceed heat_hyst\"}");
         return;
     }
     // heat_hyst/cool_start to teraz jedyny parametr histerezy na kanał (ON-offset,
@@ -194,6 +186,20 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     }
     if (cfg.trend_window_min < 5 || cfg.trend_alarm_delta <= 0.0f) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"trend_window_min must be >= 5, trend_alarm_delta must be > 0\"}");
+        return;
+    }
+    // thermal_buffer >= cool_start: inaczej fan_off_point (= fan_on_point -
+    // cool_start, patrz _updateFan()) spadłby poniżej target_temp i fan
+    // biłby się z grzałką w jej normalnym zakresie pracy.
+    if (cfg.thermal_buffer < cfg.cool_start) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"thermal_buffer must be >= cool_start\"}");
+        return;
+    }
+    // cool_full < alarm_delta_high: oba liczone od tego samego fan_on_point
+    // (patrz _updateFan()/_updateAlarms()) — bez tego ALARM_HIGH mógłby
+    // zadziałać zanim fan w ogóle dojdzie do 100%, przerywając łagodny ramp.
+    if (cfg.cool_full >= cfg.alarm_delta_high) {
+        request->send(400, "application/json", "{\"ok\":false,\"error\":\"cool_full must be < alarm_delta_high\"}");
         return;
     }
 
@@ -332,89 +338,6 @@ void handleTestClearHistory(AsyncWebServerRequest* request) {
 // natychmiast zatrzaśnie ponownie.
 void handleResetSensorFault(AsyncWebServerRequest* request) {
     thermoAlgorithm.resetSensorFaultLatch();
-    request->send(200, "application/json", "{\"ok\":true}");
-}
-
-// ============================================================
-// C-09 — odstępstwo od temp. zadanej (patrz TempAlgorithm::startDeviation/
-// endDeviation, algorithm_config.h: TempDeviationState/DeviationReasonList)
-// ============================================================
-
-// Twardy zakres bezpieczeństwa dla target_temp podczas odstępstwa — akwarium
-// morskie, ochrona przed literówką (np. "2.5" zamiast "25.0").
-#define DEVIATION_TEMP_MIN 15.0f
-#define DEVIATION_TEMP_MAX 32.0f
-
-void handleDeviationStart(AsyncWebServerRequest* request) {
-    if (!request->hasParam("target_temp", true) || !request->hasParam("reason_idx", true)) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing target_temp/reason_idx\"}");
-        return;
-    }
-
-    float target = request->getParam("target_temp", true)->value().toFloat();
-    int   reasonIdx = request->getParam("reason_idx", true)->value().toInt();
-
-    if (target < DEVIATION_TEMP_MIN || target > DEVIATION_TEMP_MAX) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"target_temp out of range\"}");
-        return;
-    }
-    if (reasonIdx < 0 || reasonIdx >= DEVIATION_REASON_COUNT) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"reason_idx out of range\"}");
-        return;
-    }
-
-    DeviationReasonList reasons;
-    loadDeviationReasonsFromFRAM(reasons);
-    if (reasons.reasons[reasonIdx].text[0] == '\0') {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"reason slot is empty\"}");
-        return;
-    }
-
-    if (!thermoAlgorithm.startDeviation(target, (uint8_t)reasonIdx)) {
-        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
-        return;
-    }
-    request->send(200, "application/json", "{\"ok\":true}");
-}
-
-void handleDeviationEnd(AsyncWebServerRequest* request) {
-    if (!thermoAlgorithm.endDeviation()) {
-        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
-        return;
-    }
-    request->send(200, "application/json", "{\"ok\":true}");
-}
-
-void handleGetDeviationReasons(AsyncWebServerRequest* request) {
-    DeviationReasonList reasons;
-    loadDeviationReasonsFromFRAM(reasons);
-
-    JsonDocument doc;
-    JsonArray arr = doc["reasons"].to<JsonArray>();
-    for (int i = 0; i < DEVIATION_REASON_COUNT; i++) arr.add(reasons.reasons[i].text);
-    String out;
-    serializeJson(doc, out);
-    request->send(200, "application/json", out);
-}
-
-void handleSetDeviationReasons(AsyncWebServerRequest* request) {
-    DeviationReasonList reasons;
-    loadDeviationReasonsFromFRAM(reasons);
-
-    char paramName[8];
-    for (int i = 0; i < DEVIATION_REASON_COUNT; i++) {
-        snprintf(paramName, sizeof(paramName), "reason%d", i);
-        if (request->hasParam(paramName, true)) {
-            String v = request->getParam(paramName, true)->value();
-            strncpy(reasons.reasons[i].text, v.c_str(), sizeof(reasons.reasons[i].text) - 1);
-            reasons.reasons[i].text[sizeof(reasons.reasons[i].text) - 1] = '\0';
-        }
-    }
-
-    if (!saveDeviationReasonsToFRAM(reasons)) {
-        request->send(500, "application/json", "{\"ok\":false,\"error\":\"FRAM save failed\"}");
-        return;
-    }
     request->send(200, "application/json", "{\"ok\":true}");
 }
 

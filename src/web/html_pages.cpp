@@ -29,25 +29,8 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   h1 { color:var(--text-primary); margin:0; font-size:1.25rem; font-weight:700; letter-spacing:-0.02em; }
   h2 { color:var(--text-secondary); font-size:var(--font-md); font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
   .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin:8px 0; box-shadow:var(--shadow); }
-  /* flex+wrap: na wąskim ekranie .temp-deviation (display:contents, patrz niżej)
-     rozpada się na osobne itemy tego samego rzędu — dev-arrow zostaje przy
-     #temp, a duży dev-value + dev-meta zawijają się pod spód. */
   .temp { display:flex; align-items:center; flex-wrap:wrap; column-gap:14px; row-gap:2px; font-size:3em; color:var(--accent-blue); }
   #temp { transition:font-size .2s ease; }
-  /* Aktywne odstępstwo: podstawowa nastawa kurczy się o 30% (.7em w kontekście
-     3em .temp) i dostaje przekreślenie — nowa wartość (.dev-value)
-     przejmuje jej PEŁNY, oryginalny rozmiar (1em = te same 3em co .temp). */
-  body.deviation-active #temp { text-decoration:line-through; opacity:.55; font-size:.7em; }
-  /* display:contents: element sam nie tworzy boxa (i tym samym nie jest już
-     osobnym flex-itemem), ale jego dzieci (dev-arrow/dev-value/dev-meta)
-     stają się bezpośrednimi itemami .temp — to one, nie on, reagują na wrap.
-     JS przełącza display między 'contents' i 'none'. */
-  .temp-deviation { display:none; font-size:1em; }
-  .temp-deviation .dev-arrow { font-size:.7em; color:var(--accent-orange); font-weight:700; }
-  .temp-deviation .dev-value { font-size:1.4em; color:var(--accent-orange); font-weight:700; line-height:1.1; }
-  .temp-deviation .dev-meta { display:flex; flex-direction:column; justify-content:center; }
-  .temp-deviation .dev-reason { font-size:.32em; color:var(--text-secondary); font-weight:600; line-height:1.3; min-height:1.3em; }
-  .temp-deviation .dev-since { font-size:.32em; color:var(--text-muted); font-weight:400; line-height:1.3; min-height:1.3em; }
 
   /* Nagłówek karty (wzorzec z dolewki: ikona-badge + uppercase h2 + separator) */
   .logo { display:flex; align-items:center; gap:12px; }
@@ -209,31 +192,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   .modal-actions { display:flex; gap:10px; }
   .modal-actions button { flex:1; margin:0; }
 
-  /* Odstępstwo od temp. zadanej (C-09) */
-  .deviation-banner { background:rgba(249,115,22,0.12); border:1px solid rgba(249,115,22,0.35); border-radius:var(--radius-sm); padding:12px 14px; }
-  .deviation-banner-title { color:var(--accent-orange); font-weight:700; font-size:var(--font-md); margin-bottom:4px; }
-
-  /* Lista powodów odstępstwa (wzorzec notes-list) */
-  .reason-section { background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius-sm); margin-top:10px; overflow:hidden; }
-  .reason-header { display:flex; align-items:center; padding:8px 12px; gap:8px; cursor:pointer; }
-  .reason-icon { flex-shrink:0; width:12px; height:12px; color:var(--accent-cyan); }
-  #reasonHeaderLabel { flex:1; font-size:var(--font-lg); color:var(--text-secondary); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .reason-header .reason-arrow { display:inline-block; transition:transform var(--transition-fast); }
-  .reason-section.expanded .reason-header .reason-arrow { transform:rotate(180deg); }
-  .reason-list { display:none; flex-direction:column; gap:6px; padding:8px 12px 12px; }
-  .reason-section.expanded .reason-list { display:flex; }
-  .reason-entry { display:flex; align-items:center; gap:6px; padding:2px; border-radius:var(--radius-sm); border:1px solid transparent; }
-  .reason-entry span { width:18px; color:var(--text-muted); font-size:var(--font-xs); }
-  .reason-entry input { flex:1; height:30px; padding:0 8px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-sm); }
-  .reason-entry.selected input { border-color:var(--accent-cyan); background:rgba(34,211,213,0.08); }
-  /* Osobny przycisk wyboru (wzorzec note-sel-btn z dozownika) — klikalny
-     obszar inputu wypełnia flex:1 całego wiersza, więc kliknięcie "w wiersz"
-     prawie zawsze trafiało w input i było odrzucane jako edycja tekstu. */
-  .reason-sel-btn { flex-shrink:0; width:18px; height:18px; border:none; background:none; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; justify-content:center; border-radius:4px; transition:color var(--transition-fast); padding:0; }
-  .reason-sel-btn:hover, .reason-sel-btn.active { color:var(--accent-cyan); }
-  .reason-sel-btn svg { width:10px; height:10px; }
-  .reason-sel-btn:disabled { opacity:.3; cursor:not-allowed; }
-
   /* Stepper prędkości wentylatora — wygląda jak jeden przycisk (kolory/wysokość
      spójne z resztą), podzielony na dwie strefy kliknięcia ze strzałkami */
   .fan-stepper { display:flex; align-items:stretch; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--bg-input); overflow:hidden; transition:all var(--transition-fast); }
@@ -282,14 +240,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   </div>
   <div class="status-main status-ok" id="statusMain">
     <div class="status-main-body">
-      <div class="temp"><span id="temp">--.-°C</span><span class="temp-deviation" id="tempDeviation">
-        <span class="dev-arrow" id="tempDeviationArrow">→</span>
-        <span class="dev-value" id="tempDeviationValue"></span>
-        <span class="dev-meta" id="tempDeviationMeta">
-          <span class="dev-reason" id="tempDeviationReason"></span>
-          <span class="dev-since" id="tempDeviationSince"></span>
-        </span>
-      </span></div>
+      <div class="temp"><span id="temp">--.-°C</span></div>
       <div class="status-main-sub">
         <span class="badge idle" id="state">IDLE</span>
         <span class="sub-sep">•</span>
@@ -352,33 +303,6 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   </div>
 </div>
 
-<!-- C-09: odstępstwo od temp. zadanej -->
-<div class="card">
-  <div class="card-header">
-    <div class="card-header-icon" style="background:rgba(249,115,22,0.15);">
-      <svg fill="currentColor" style="color:var(--accent-orange);" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-    </div>
-    <h2>Temperature Deviation</h2>
-  </div>
-
-  <div class="btn-row">
-    <button class="lockable-btn" id="deviationToggle">Deviation: OFF</button>
-    <div class="fan-stepper disabled" id="devTempStepper">
-      <button type="button" class="fan-step-btn" onclick="stepDevTemp(-1)">▼</button>
-      <span class="fan-step-val" id="devTempVal">--.-°C</span>
-      <button type="button" class="fan-step-btn" onclick="stepDevTemp(1)">▲</button>
-    </div>
-  </div>
-  <div class="reason-section" id="reasonSection">
-    <div class="reason-header" onclick="toggleReasonEditor()">
-      <svg class="reason-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      <span id="reasonHeaderLabel">Select reason…</span>
-      <span class="reason-arrow">▾</span>
-    </div>
-    <div class="reason-list" id="reasonEditList"></div>
-  </div>
-</div>
-
 <button id="algSettingsBtn" class="settings-toggle-btn" onclick="toggleAlgSettings()">⚙ Settings</button>
 
 <div class="card" id="algSettingsPanel" style="display:none;">
@@ -386,15 +310,16 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   <div class="settings-grid">
     <label class="settings-field">Target temperature [°C]<input type="number" step="0.1" id="target_temp"></label>
     <label class="settings-field">Heater hysteresis [°C]<input type="number" step="0.1" min="0.1" id="heat_hyst"></label>
+    <label class="settings-field">Thermal buffer [°C]<input type="number" step="0.1" id="thermal_buffer"></label>
     <label class="settings-field">Fan hysteresis [°C]<input type="number" step="0.1" min="0.1" id="cool_start"></label>
     <label class="settings-field">Fan 100% [°C]<input type="number" step="0.1" id="cool_full"></label>
     <label class="settings-field">Minimum fan speed [%]<input type="number" step="1" min="0" max="100" id="fan_min_pct"></label>
     <label class="settings-field">ALARM_LOW threshold [°C]<input type="number" step="0.1" id="alarm_delta_low"></label>
     <label class="settings-field">ALARM_HIGH threshold [°C]<input type="number" step="0.1" id="alarm_delta_high"></label>
-    <label class="settings-field">Trend: required temp. [°C]<input type="number" step="0.1" id="trend_alarm_delta"></label>
-    <label class="settings-field">Trend: window length [min]<input type="number" step="1" min="5" id="trend_window_min"></label>
+    <label class="settings-field">Heater fault: min. temp rise [°C]<input type="number" step="0.1" id="trend_alarm_delta"></label>
+    <label class="settings-field">Heater fault: check window [min]<input type="number" step="1" min="5" id="trend_window_min"></label>
     <label class="settings-field">Sensor calibration [°C]<input type="number" step="0.1" id="temp_offset"></label>
-    <label class="settings-field">Heater power [W]<input type="number" step="1" id="heater_watt"></label>
+    <label class="settings-field">Reserved<input type="number" step="1" id="heater_watt"></label>
     <label class="settings-field">Pulses / kWh (energy meter)<input type="number" step="1" id="pulses_per_kwh"></label>
   </div>
   <div class="btn-row" style="margin-top:10px;">
@@ -590,8 +515,6 @@ let currentFanPct = 0;
 let currentHeaterOn = false;
 let currentFanOn = false;
 let serviceModeActive = false;
-let deviationIsActive = false;
-let devTargetTemp = 0;
 let lastEnergyKwhStr = null;
 
 async function refresh() {
@@ -643,44 +566,6 @@ async function refresh() {
 
     document.getElementById('wifiItem').className = 'status-main-wifi ' + (d.wifi_connected ? 'wifi-on' : 'wifi-off');
 
-    deviationIsActive = d.deviation_active;
-    document.body.classList.toggle('deviation-active', deviationIsActive);
-
-    // Przycisk bistabilny (jak Auto/Service Mode) — label + pomarańcz na czas
-    // aktywnego odstępstwa. Zmiana wybranego powodu wymaga najpierw End —
-    // stąd synchronizacja selectedReasonIdx z serwerem tylko gdy aktywne.
-    const devBtn = document.getElementById('deviationToggle');
-    devBtn.textContent = 'Deviation: ' + (deviationIsActive ? 'ON' : 'OFF');
-    devBtn.classList.toggle('btn-service', deviationIsActive);
-    if (deviationIsActive) selectedReasonIdx = d.deviation_reason_idx;
-    if (deviationIsActive !== reasonUiLockedState) {
-      reasonUiLockedState = deviationIsActive;
-      renderReasonEditor();
-      updateReasonHeaderLabel();
-    }
-
-    // Stepper nowej temp. zadanej — używalny zawsze gdy odstępstwo NIEaktywne
-    // (żeby je zmienić trzeba najpierw End); niezależny od Service Mode —
-    // to nie jest ręczne sterowanie sprzętem jak heater/fan (manual-ctrl).
-    const devStepper = document.getElementById('devTempStepper');
-    devStepper.classList.toggle('active', deviationIsActive);
-    setStepperEnabled(devStepper, !deviationIsActive);
-
-    // Nowa nastawa pojawia się przy głównej temp. (po prawej), podstawowa
-    // nastawa dostaje przekreślenie (CSS: body.deviation-active #temp).
-    const tempDev = document.getElementById('tempDeviation');
-    if (deviationIsActive) {
-      tempDev.style.display = 'contents';
-      document.getElementById('tempDeviationValue').textContent =
-        parseFloat(document.getElementById('target_temp').value).toFixed(1) + '°C';
-      document.getElementById('tempDeviationReason').textContent =
-        'Reason: ' + (deviationReasons[d.deviation_reason_idx] || '—');
-      document.getElementById('tempDeviationSince').textContent =
-        'active since ' + new Date(d.deviation_since * 1000).toLocaleString();
-    } else {
-      tempDev.style.display = 'none';
-    }
-
     const e = await fetch('api/energy');
     const en = await e.json();
     const kwhStr = en.total_kwh.toFixed(2);
@@ -713,138 +598,16 @@ function formatResetTs(ts) {
 async function loadThermoConfig() {
   const r = await fetch('api/thermo-config');
   const c = await r.json();
-  for (const k of ['target_temp','heat_hyst','cool_start','cool_full','fan_min_pct',
+  for (const k of ['target_temp','heat_hyst','cool_start','cool_full','thermal_buffer','fan_min_pct',
                     'alarm_delta_low','alarm_delta_high','trend_alarm_delta','trend_window_min',
                     'temp_offset','heater_watt','pulses_per_kwh']) {
     if (c[k] !== undefined) document.getElementById(k).value = c[k];
   }
-  // Stepper odstępstwa startuje zawsze od aktualnej efektywnej temp. zadanej
-  // (normalnej albo już zdewiowanej) — po End automatycznie wraca do baseline.
-  devTargetTemp = c.target_temp;
-  document.getElementById('devTempVal').textContent = devTargetTemp.toFixed(1) + '°C';
 }
 
 function toggleAlgSettings() {
   const panel = document.getElementById('algSettingsPanel');
   panel.style.display = panel.style.display === 'none' ? '' : 'none';
-}
-
-// ── C-09: odstępstwo od temp. zadanej + lista powodów ───────────────────
-let deviationReasons = [];
-let selectedReasonIdx = null;
-let reasonUiLockedState = null;
-
-async function loadDeviationReasons() {
-  const r = await fetch('api/deviation-reasons');
-  const d = await r.json();
-  deviationReasons = d.reasons || [];
-  // Wzorzec z dozownika: nagłówek pokazuje konkretnie wybraną pozycję, nie
-  // placeholder — domyślnie zaznacz pierwszy niepusty powód.
-  if (selectedReasonIdx === null) {
-    const firstIdx = deviationReasons.findIndex(t => t);
-    if (firstIdx !== -1) selectedReasonIdx = firstIdx;
-  }
-  renderReasonEditor();
-  updateReasonHeaderLabel();
-}
-
-// Wybór powodu = osobny przycisk (kółko, wzorzec note-sel-btn/selectNote z
-// dozownika), nie kliknięcie wiersza — input zajmuje flex:1 wiersza, więc
-// kliknięcie "w wiersz" prawie zawsze trafiało w pole tekstowe i było
-// ignorowane. selectReason() aktualizuje DOM punktowo (bez przebudowy całej
-// listy), tak jak selectNote() w dozowniku — pełny render tylko przy starcie
-// i przy zmianie stanu blokady (start/koniec odstępstwa).
-function renderReasonEditor() {
-  const list = document.getElementById('reasonEditList');
-  list.innerHTML = '';
-  for (let i = 0; i < 8; i++) {
-    const isSel = selectedReasonIdx === i;
-    const row = document.createElement('div');
-    row.id = 'reasonEntry_' + i;
-    row.className = 'reason-entry' + (isSel ? ' selected' : '');
-    const span = document.createElement('span'); span.textContent = i + 1;
-    const inp = document.createElement('input');
-    inp.type = 'text'; inp.maxLength = 29; inp.value = deviationReasons[i] || ''; inp.dataset.idx = i;
-    inp.addEventListener('blur', () => {
-      deviationReasons[i] = inp.value.slice(0, 29);
-      saveDeviationReasons();
-      document.getElementById('reasonSelBtn_' + i).disabled = deviationIsActive || !deviationReasons[i];
-      if (selectedReasonIdx === i) updateReasonHeaderLabel();
-    });
-    const selBtn = document.createElement('button');
-    selBtn.type = 'button';
-    selBtn.id = 'reasonSelBtn_' + i;
-    selBtn.className = 'reason-sel-btn' + (isSel ? ' active' : '');
-    selBtn.disabled = deviationIsActive || !deviationReasons[i];
-    selBtn.innerHTML = reasonSelSvg(isSel);
-    selBtn.addEventListener('click', () => selectReason(i));
-    row.appendChild(span); row.appendChild(inp); row.appendChild(selBtn);
-    list.appendChild(row);
-  }
-}
-
-function selectReason(i) {
-  const prev = selectedReasonIdx;
-  selectedReasonIdx = i;
-  [prev, i].forEach((idx) => {
-    if (idx === null || idx === undefined) return;
-    const sel = idx === i;
-    const entry = document.getElementById('reasonEntry_' + idx);
-    const btn = document.getElementById('reasonSelBtn_' + idx);
-    if (entry) entry.classList.toggle('selected', sel);
-    if (btn) { btn.classList.toggle('active', sel); btn.innerHTML = reasonSelSvg(sel); }
-  });
-  updateReasonHeaderLabel();
-}
-
-function reasonSelSvg(filled) {
-  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="4"' + (filled ? ' fill="currentColor"' : '') + '/></svg>';
-}
-
-function updateReasonHeaderLabel() {
-  const text = selectedReasonIdx !== null ? deviationReasons[selectedReasonIdx] : null;
-  document.getElementById('reasonHeaderLabel').textContent = text || 'Select reason…';
-}
-
-async function saveDeviationReasons() {
-  const body = {};
-  for (let i = 0; i < 8; i++) body['reason' + i] = deviationReasons[i] || '';
-  await fetch('api/deviation-reasons', { method: 'POST', body: new URLSearchParams(body) });
-}
-
-function toggleReasonEditor() {
-  document.getElementById('reasonSection').classList.toggle('expanded');
-}
-
-function stepDevTemp(dir) {
-  if (document.getElementById('devTempStepper').classList.contains('disabled')) return;
-  devTargetTemp = Math.round((devTargetTemp + dir * 0.5) * 10) / 10;
-  document.getElementById('devTempVal').textContent = devTargetTemp.toFixed(1) + '°C';
-}
-
-function startDeviation() {
-  if (selectedReasonIdx === null || !deviationReasons[selectedReasonIdx]) {
-    // Świeże urządzenie ma 8 pustych slotów powodów — nie ma czego wybrać.
-    // Zamiast cichego alertu, od razu rozwiń i podświetl listę.
-    document.getElementById('reasonSection').classList.add('expanded');
-    const firstInput = document.querySelector('#reasonEditList input');
-    if (firstInput) firstInput.focus();
-    showAlert('No reason selected', 'Add at least one reason in the list below, then select it by clicking its row.', 'err');
-    return;
-  }
-  showConfirm('Start temperature deviation?', 'Target temperature will change to ' + devTargetTemp.toFixed(1) + '°C.', 'warn', async () => {
-    const r = await fetch('api/deviation/start', { method: 'POST', body: new URLSearchParams({ target_temp: String(devTargetTemp), reason_idx: String(selectedReasonIdx) }) });
-    const j = await r.json();
-    if (!j.ok) { showAlert('Error', j.error || 'Failed to start deviation', 'err'); return; }
-    refresh(); loadThermoConfig();
-  });
-}
-
-async function endDeviation() {
-  const r = await fetch('api/deviation/end', { method: 'POST' });
-  const j = await r.json();
-  if (!j.ok) { showAlert('Error', j.error || 'Failed to end deviation', 'err'); return; }
-  refresh(); loadThermoConfig();
 }
 
 // ── Wykresy temperatury: hourly + daily w jednej karcie (portowane z
@@ -1064,10 +827,6 @@ function stepFan(dir) {
   fetch('api/test/fan', { method: 'POST', body: new URLSearchParams({pct: String(v)}) }).then(refresh);
 }
 
-document.getElementById('deviationToggle').addEventListener('click', () => {
-  if (deviationIsActive) endDeviation(); else startDeviation();
-});
-
 document.getElementById('btnSystemToggle').addEventListener('click', async () => {
   await fetch('api/system-toggle', { method: 'POST' });
   refresh();
@@ -1095,7 +854,7 @@ document.getElementById('btnLogout').addEventListener('click', async () => {
 
 document.getElementById('btnSaveThermo').addEventListener('click', async () => {
   const body = {};
-  for (const k of ['target_temp','heat_hyst','cool_start','cool_full','fan_min_pct',
+  for (const k of ['target_temp','heat_hyst','cool_start','cool_full','thermal_buffer','fan_min_pct',
                     'alarm_delta_low','alarm_delta_high','trend_alarm_delta','trend_window_min',
                     'temp_offset','heater_watt','pulses_per_kwh']) {
     body[k] = document.getElementById(k).value;
@@ -1112,7 +871,7 @@ document.getElementById('btnSaveThermo').addEventListener('click', async () => {
 document.getElementById('btnLoadCharts').addEventListener('click', loadCharts);
 
 updateLockUI();
-loadDeviationReasons().then(refresh);
+refresh();
 loadThermoConfig();
 loadCharts();
 setInterval(refresh, 5000);
