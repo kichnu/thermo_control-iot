@@ -11,7 +11,7 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   :root {
     --bg-primary:#0a0f1a; --bg-card:#111827; --bg-input:#1e293b; --border:#2d3a4f;
     --text-primary:#f1f5f9; --text-secondary:#94a3b8; --text-muted:#64748b;
-    --accent-blue:#38bdf8; --accent-cyan:#22d3d5; --accent-green:#22c55e;
+    --accent-blue:#38bdf8; --accent-blue-dark:#1d4ed8; --accent-cyan:#22d3d5; --accent-green:#22c55e;
     --accent-red:#ef4444; --accent-orange:#f97316; --accent-yellow:#eab308;
     --radius:12px; --radius-sm:8px; --radius-lg:16px;
     --font-xs:.72rem; --font-sm:.8rem; --font-md:.9rem; --font-lg:1.05rem;
@@ -29,7 +29,15 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   h1 { color:var(--text-primary); margin:0; font-size:1.25rem; font-weight:700; letter-spacing:-0.02em; }
   h2 { color:var(--text-secondary); font-size:var(--font-md); font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
   .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin:8px 0; box-shadow:var(--shadow); }
-  .temp { display:flex; align-items:center; flex-wrap:wrap; column-gap:14px; row-gap:2px; font-size:3em; color:var(--accent-blue); }
+  .temp { display:flex; align-items:center; flex-wrap:wrap; column-gap:14px; row-gap:2px; font-size:3em; color:var(--text-primary); }
+  /* Kolor #temp wg stanu (2026-07-25): heating=niebieski, thermal-buffer=żółty
+     (cicha uwaga o buforze dzień/noc), alarm HIGH/TREND/SENSOR=czerwony,
+     alarm LOW=wyraźny ciemny niebieski (odróżnia się od zwykłego heating-blue,
+     mimo że tło/border karty i tak idzie na czerwono jak przy każdym alarmie). */
+  #temp.temp-heating  { color:var(--accent-blue); }
+  #temp.temp-buffer   { color:var(--accent-yellow); }
+  #temp.temp-alarm    { color:var(--accent-red); }
+  #temp.temp-alarm-low{ color:var(--accent-blue-dark); }
   #temp { transition:font-size .2s ease; }
 
   /* Nagłówek karty (wzorzec z dolewki: ikona-badge + uppercase h2 + separator) */
@@ -244,11 +252,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       <div class="status-main-sub">
         <span class="badge idle" id="state">IDLE</span>
         <span class="sub-sep">•</span>
-        <span>Heater: <span id="heater">OFF</span></span>
+        <span>Heater: <span class="badge" id="heater">OFF</span></span>
         <span class="sub-sep">•</span>
-        <span>Fan: <span id="fan">0%</span></span>
+        <span>Fan: <span class="badge" id="fan">0%</span></span>
         <span class="sub-sep">•</span>
-        <span>Alarms: <span id="alarms">none</span></span>
+        <span>Alarms: <span class="badge" id="alarms">none</span></span>
       </div>
     </div>
   </div>
@@ -534,6 +542,8 @@ async function refresh() {
     currentFanOn = d.fan_pct > 0;
     document.getElementById('heaterToggle').textContent = 'Heater: ' + (currentHeaterOn ? 'ON' : 'OFF');
     document.getElementById('fanToggle').textContent = 'Fan: ' + (currentFanOn ? 'ON' : 'OFF');
+    document.getElementById('heater').classList.toggle('idle', currentHeaterOn);
+    document.getElementById('fan').classList.toggle('idle', currentFanOn);
 
     // Przycisk pokazuje stan BIEŻĄCY (nie cel kliknięcia) — Service Mode
     // dostaje ostrzegawczy pomarańcz (wzorzec .btn-service z dolewki).
@@ -557,9 +567,24 @@ async function refresh() {
     if (d.alarm_flags & 0x04) flags.push('TREND');
     if (d.alarm_flags & 0x08) flags.push('SENSOR');
     document.getElementById('alarms').textContent = flags.length ? flags.join(', ') : 'none';
+    document.getElementById('alarms').classList.toggle('alarm', flags.length > 0);
     document.getElementById('sensorFaultBanner').style.display = d.sensor_fault_latched ? 'block' : 'none';
 
     const hasError = (d.alarm_flags !== 0) || d.sensor_fault_latched;
+
+    // Kolor #temp wg stanu — priorytet: alarm (LOW dostaje wyraźny ciemny
+    // niebieski zamiast czerwieni, żeby odróżnić od HIGH/TREND/SENSOR mimo
+    // że tło karty i tak jest czerwone dla każdego z nich) > heating > buffer.
+    const tempEl = document.getElementById('temp');
+    tempEl.classList.remove('temp-heating', 'temp-buffer', 'temp-alarm', 'temp-alarm-low');
+    if (hasError) {
+      tempEl.classList.add((d.alarm_flags & 0x01) ? 'temp-alarm-low' : 'temp-alarm');
+    } else if (d.heater_on) {
+      tempEl.classList.add('temp-heating');
+    } else if (d.in_buffer_zone) {
+      tempEl.classList.add('temp-buffer');
+    }
+
     const statusMain = document.getElementById('statusMain');
     statusMain.className = 'status-main';
     statusMain.classList.add(hasError ? 'status-error' : d.system_disabled ? 'status-disabled' : 'status-ok');

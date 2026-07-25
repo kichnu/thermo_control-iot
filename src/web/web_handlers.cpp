@@ -40,11 +40,21 @@ void registerThermoHandlers(AsyncWebServer& server) {
 }
 
 void handleStatus(AsyncWebServerRequest* request) {
+    float temp = getTemperature();
+    const ThermoConfig& cfg = thermoAlgorithm.getConfig();
+    float fan_on_point = cfg.target_temp + cfg.thermal_buffer;
+    // "Cicha uwaga" w GUI (patrz CLAUDE.md, thermal_buffer): temp już powyżej
+    // target_temp, ale jeszcze poniżej progu włączenia fana — system czeka,
+    // nic nie robi.
+    bool in_buffer_zone = !isHeaterOn() && getFanSpeedPct() == 0 &&
+                           temp >= cfg.target_temp && temp < fan_on_point;
+
     JsonDocument doc;
-    doc["temp_c"]          = getTemperature();
+    doc["temp_c"]          = temp;
     doc["state"]           = thermoAlgorithm.getStateString();
     doc["heater_on"]       = isHeaterOn();
     doc["fan_pct"]         = getFanSpeedPct();
+    doc["in_buffer_zone"]  = in_buffer_zone;
     doc["alarm_flags"]     = thermoAlgorithm.getAlarmFlags();
     doc["sensor_fault_latched"] = thermoAlgorithm.isSensorFaultLatched();
     doc["system_disabled"] = isSystemDisabled();
