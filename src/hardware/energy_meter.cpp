@@ -16,9 +16,13 @@ static const uint32_t ENERGY_SAVE_EVERY_N_PULSES = 10;
 
 // Min. odstęp między akceptowanymi impulsami — odrzuca zbocza fizycznie
 // niemożliwe dla licznika S0 (drgania styków / szum EMI z sąsiadującego kabla
-// 230V, patrz pamięć projektu). 50ms = maks. 20 imp/s = ok. 72 kW przy
-// pulses_per_kwh=1000 — duży zapas ponad realną moc grzałki/pompy.
-static const uint32_t MIN_PULSE_INTERVAL_MS = 50;
+// 230V, patrz pamięć projektu). 250ms = maks. 4 imp/s = ok. 14,4 kW przy
+// pulses_per_kwh=1000 — wciąż duży zapas ponad realną moc grzałki/pompy.
+// Podniesione z 50ms 2026-07-25: podwójne zliczanie pojedynczego impulsu
+// (wolne, zaszumione zbocze narastające po impulsie) dawało pary odległe
+// o ok. 100ms, więc 50ms filtra tego nie łapało — patrz log debug w
+// updateEnergyMeter().
+static const uint32_t MIN_PULSE_INTERVAL_MS = 250;
 
 void IRAM_ATTR onEnergyPulse() {
     uint32_t now = millis();
