@@ -30,12 +30,16 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   h2 { color:var(--text-secondary); font-size:var(--font-md); font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
   .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin:8px 0; box-shadow:var(--shadow); }
   .temp { display:flex; align-items:center; flex-wrap:wrap; column-gap:14px; row-gap:2px; font-size:3em; color:var(--text-primary); }
-  /* Kolor #temp wg stanu (2026-07-25): heating=niebieski, thermal-buffer=żółty
-     (cicha uwaga o buforze dzień/noc), alarm HIGH/TREND/SENSOR=czerwony,
-     alarm LOW=wyraźny ciemny niebieski (odróżnia się od zwykłego heating-blue,
-     mimo że tło/border karty i tak idzie na czerwono jak przy każdym alarmie). */
+  /* Kolor #temp wg stanu (2026-07-25, rozszerzone 2026-08-15): heating=niebieski,
+     thermal-buffer=żółty (cicha uwaga o buforze dzień/noc, target..fan_on_point),
+     cooling=pomarańczowy (fan aktywny, fan_on_point..alarm_delta_high — bez tego
+     ten zakres wypadał "biały", jakby nic się nie działo), alarm HIGH/TREND/
+     SENSOR=czerwony, alarm LOW=wyraźny ciemny niebieski (odróżnia się od zwykłego
+     heating-blue, mimo że tło/border karty i tak idzie na czerwono jak przy
+     każdym alarmie). */
   #temp.temp-heating  { color:var(--accent-blue); }
   #temp.temp-buffer   { color:var(--accent-yellow); }
+  #temp.temp-cooling  { color:var(--accent-orange); }
   #temp.temp-alarm    { color:var(--accent-red); }
   #temp.temp-alarm-low{ color:var(--accent-blue-dark); }
   #temp { transition:font-size .2s ease; }
@@ -574,15 +578,20 @@ async function refresh() {
 
     // Kolor #temp wg stanu — priorytet: alarm (LOW dostaje wyraźny ciemny
     // niebieski zamiast czerwieni, żeby odróżnić od HIGH/TREND/SENSOR mimo
-    // że tło karty i tak jest czerwone dla każdego z nich) > heating > buffer.
+    // że tło karty i tak jest czerwone dla każdego z nich) > heating > buffer > cooling.
+    // fan_pct > 0 pokrywa dokładnie zakres fan_on_point..alarm_delta_high —
+    // in_buffer_zone jest false w tym zakresie (patrz web_handlers.cpp), więc
+    // bez tej gałęzi temperatura wyglądała na "białą"/neutralną mimo aktywnego fana.
     const tempEl = document.getElementById('temp');
-    tempEl.classList.remove('temp-heating', 'temp-buffer', 'temp-alarm', 'temp-alarm-low');
+    tempEl.classList.remove('temp-heating', 'temp-buffer', 'temp-cooling', 'temp-alarm', 'temp-alarm-low');
     if (hasError) {
       tempEl.classList.add((d.alarm_flags & 0x01) ? 'temp-alarm-low' : 'temp-alarm');
     } else if (d.heater_on) {
       tempEl.classList.add('temp-heating');
     } else if (d.in_buffer_zone) {
       tempEl.classList.add('temp-buffer');
+    } else if (d.fan_pct > 0) {
+      tempEl.classList.add('temp-cooling');
     }
 
     const statusMain = document.getElementById('statusMain');
