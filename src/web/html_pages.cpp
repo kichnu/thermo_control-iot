@@ -551,8 +551,13 @@ async function refresh() {
 
     // Przycisk pokazuje stan BIEŻĄCY (nie cel kliknięcia) — Service Mode
     // dostaje ostrzegawczy pomarańcz (wzorzec .btn-service z dolewki).
+    // Countdown do auto-enable — sekundy liczone przez backend (getSystemAutoEnableRemainingS()),
+    // więc niezależne od tego, ile klientów GUI ma otwartą stronę; odświeża się w rytmie
+    // pollingu refresh() (5s), bez lokalnego setInterval co sekundę.
     const sysBtn = document.getElementById('btnSystemToggle');
-    sysBtn.textContent = d.system_disabled ? 'Service Mode' : 'Auto Mode';
+    sysBtn.textContent = d.system_disabled
+      ? 'Service Mode' + (d.auto_enable_remaining_s > 0 ? ' (' + d.auto_enable_remaining_s + 's)' : '')
+      : 'Auto Mode';
     sysBtn.classList.toggle('btn-service', d.system_disabled);
 
     // Ręczne sterowanie (heater/fan) — aktywne TYLKO w Service Mode, z tym

@@ -21,6 +21,7 @@ extern bool systemDisabled;
 void setSystemState(bool enabled);
 bool isSystemDisabled();
 void checkSystemAutoEnable();
+uint32_t getSystemAutoEnableRemainingS();  // sekundy do auto-enable; 0 gdy Auto Mode
 
 // ================= SECURITY CONSTANTS =================
 const unsigned long SESSION_TIMEOUT_MS      = 1800000;

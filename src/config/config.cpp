@@ -38,6 +38,16 @@ void checkSystemAutoEnable() {
     }
 }
 
+// GUI countdown (btnSystemToggle) — odejmowanie unsigned long, bezpieczne
+// przy przepełnieniu millis() tak samo jak w checkSystemAutoEnable() (patrz
+// tam); w praktyce i tak nieistotne, bo urządzenie restartuje się co dobę.
+uint32_t getSystemAutoEnableRemainingS() {
+    if (!systemDisabled || s_system_disabled_ms == 0) return 0;
+    unsigned long elapsed = millis() - s_system_disabled_ms;
+    if (elapsed >= SYSTEM_AUTO_ENABLE_MS) return 0;
+    return (uint32_t)((SYSTEM_AUTO_ENABLE_MS - elapsed) / 1000UL);
+}
+
 // ============== FRAM INIT ==============
 
 void initSystemFRAM() {

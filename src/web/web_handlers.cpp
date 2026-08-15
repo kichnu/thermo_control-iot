@@ -58,6 +58,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["alarm_flags"]     = thermoAlgorithm.getAlarmFlags();
     doc["sensor_fault_latched"] = thermoAlgorithm.isSensorFaultLatched();
     doc["system_disabled"] = isSystemDisabled();
+    doc["auto_enable_remaining_s"] = getSystemAutoEnableRemainingS();
     doc["energy_kwh_today"]= getEnergyKwhToday();
     doc["wifi_connected"]  = isWiFiConnected();
 
