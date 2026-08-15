@@ -141,17 +141,6 @@ void loop() {
 
     unsigned long now = millis();
 
-    // Codzienny restart o północy (minimalny uptime: 30 min)
-    if (g_restartAtTs > 0 && now > 1800000UL) {
-        if ((uint32_t)getUnixTimestamp() >= g_restartAtTs) {
-            LOG_INFO("=== DAILY RESTART ===");
-            heaterEmergencyOff();
-            energyResetDayCounter();  // nowa doba — zeruje "dziś" i zapisuje stan do FRAM
-            delay(1000);
-            ESP.restart();
-        }
-    }
-
     // Pomiar temperatury co TEMP_MEASURE_INTERVAL_S
     if (now - g_lastTempUpdate >= TEMP_MEASURE_MS) {
         g_lastTempUpdate = now;
@@ -162,9 +151,17 @@ void loop() {
     }
 
     // 100ms tick — sieć, bezpieczeństwo i granica godziny/doby dla logowania.
-    // checkLogRollover() musi być poza 15s cyklu update() — restart o lokalnej
-    // północy (patrz wyżej) jest sprawdzany co pętlę i mógłby wygrać wyścig
-    // z detekcją granicy doby, gdyby ta była gated na TEMP_MEASURE_MS.
+    // Sprawdzenie restartu MUSI być w tym samym bloku, za checkLogRollover()
+    // (nie osobnym, bezwarunkowym if-em niżej) — to była realna przyczyna
+    // bug-a "losowego" zapisu dobowej średniej (2026-08-15, user report):
+    // dopóki restart-check leciał w KAŻDEJ iteracji loop() (~100×/s), a
+    // checkLogRollover() tylko raz na 100ms (~10×/s), to w iteracji, w
+    // której RTC przekraczał północ akurat POZA oknem ticka, restart-check
+    // i tak już widział nowy czas i odpalał ESP.restart() zanim
+    // checkLogRollover() w ogóle zauważył granicę doby — flush ostatniej
+    // godziny + rollup dobowy ginęły bez śladu, bez żadnego retry. Oba
+    // warunki muszą dzielić dokładnie tę samą bramkę czasową, żeby
+    // checkLogRollover() miał gwarancję zadziałać przed restartem.
     static unsigned long lastTick = 0;
     if (now - lastTick >= 100) {
         lastTick = now;
@@ -175,6 +172,17 @@ void loop() {
         updateEnergyMeter();
         updateRTCSync();
         thermoAlgorithm.checkLogRollover();
+
+        // Codzienny restart o północy (minimalny uptime: 30 min)
+        if (g_restartAtTs > 0 && now > 1800000UL) {
+            if ((uint32_t)getUnixTimestamp() >= g_restartAtTs) {
+                LOG_INFO("=== DAILY RESTART ===");
+                heaterEmergencyOff();
+                energyResetDayCounter();  // nowa doba — zeruje "dziś" i zapisuje stan do FRAM
+                delay(1000);
+                ESP.restart();
+            }
+        }
     }
 
     delay(10);
