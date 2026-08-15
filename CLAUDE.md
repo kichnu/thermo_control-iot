@@ -20,7 +20,7 @@ pio device monitor              # 115200 baud
 
 # OTA (WiFi) — only works once a firmware containing ArduinoOTA is already
 # running on the device (first flash of that firmware must be via USB)
-export OTA_PASSWORD=...
+# OTA_PASSWORD_192_168_10_4 set persistently via ~/.secrets/iot.env, see README
 pio run -e seeed_xiao_esp32s3_ota -t upload
 
 # Remote logs (no USB) — only works once firmware with the log-socket is running
@@ -200,8 +200,12 @@ Concept + implementation notes: `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`.
   `upload_protocol = espota`). `default_envs = seeed_xiao_esp32s3` keeps bare
   `pio run -t upload` on USB — without it, PlatformIO would try to build/upload
   *every* environment, including a doomed OTA attempt.
-- `OTA_PASSWORD` is injected via `${sysenv.OTA_PASSWORD}` into both `build_flags`
-  (firmware) and `upload_flags` (espota) — never hardcode it in `platformio.ini`.
+- `OTA_PASSWORD` (the firmware-side `#define`) is injected via
+  `${sysenv.OTA_PASSWORD_192_168_10_4}` into both `build_flags` (firmware) and
+  `upload_flags` (espota) — never hardcode it in `platformio.ini`. The shell
+  variable is named after this device's local IP, not the project — see
+  README for why (name collisions across the other IoT projects sharing
+  `~/.secrets/iot.env`).
 - `main.cpp`: `ArduinoOTA` set up after `initWiFi()`, gated on `isWiFiConnected()`.
   `onStart` calls `heaterEmergencyOff()`/`fanEmergencyOff()`/`setSystemState(false)`
   before the flash write. `ArduinoOTA.handle()` runs every `loop()` iteration

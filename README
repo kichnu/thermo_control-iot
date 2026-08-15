@@ -82,7 +82,6 @@ pio run -t upload
 pio device monitor          # 115200 baud
 
 # OTA (WiFi) — only works once the device is already running firmware with this code, see below
-export OTA_PASSWORD='password'   # single quotes — see gotcha below
 pio run -e seeed_xiao_esp32s3_ota -t upload --upload-port 192.168.10.4
 
 # Remote logs (no USB) — requires firmware with the log-socket, see below
@@ -98,10 +97,24 @@ partition-scheme crash, one log-socket client at a time, etc.) →
 `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`; short portable checklist for
 reusing this in other projects → `docs/OTA_WIFI_UPLOAD_PATTERN.md`.
 
-**Gotcha:** `export OTA_PASSWORD=...` must be in the *same* shell invocation as
-`pio run` (a separate command/process won't see it — the device would get
-reflashed with an empty password baked in). Quote the password in single
-quotes if it contains shell-special characters (`#`, `$`, spaces).
+**`OTA_PASSWORD_192_168_10_4` setup:** the shell variable is named after this
+device's local IP (dots → underscores), not the project name — several IoT
+projects share one `~/.secrets/iot.env`/`~/.zshrc`, and a name collision
+(everyone using plain `OTA_PASSWORD`) risks flashing the wrong password to the
+wrong device. `platformio.ini` reads it via `${sysenv.OTA_PASSWORD_192_168_10_4}`
+into `build_flags` as a global `-D` — which also means PlatformIO/SCons
+invalidates the build signature for *every* source file whenever the flag's
+value changes between invocations. An unset/ad-hoc `export` in a fresh shell
+causes a full from-scratch rebuild on every OTA upload, not just an
+incremental one. Fix: set it once, permanently, outside the repo —
+`~/.secrets/iot.env` (`chmod 600`, `export OTA_PASSWORD_192_168_10_4='...'`,
+one line per IoT device) sourced from `~/.zshrc`:
+```bash
+[ -f ~/.secrets/iot.env ] && source ~/.secrets/iot.env
+```
+With a stable value, `pio run -e seeed_xiao_esp32s3_ota -t upload` goes back
+to normal incremental builds. Quote the password in single quotes if it
+contains shell-special characters (`#`, `$`, spaces).
 
 ## Provisioning (first-time setup)
 

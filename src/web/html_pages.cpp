@@ -183,6 +183,9 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   .lock-pwd-input { flex:1; height:34px; padding:0 10px; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-md); outline:none; min-width:0; }
   .lock-pwd-input.error { border-color:var(--accent-red); }
   .lock-pwd-msg { font-size:var(--font-xs); color:var(--accent-red); min-width:100px; }
+  @media (max-width:600px) {
+    .lock-pwd-msg { min-width:20px; }
+  }
   .lock-close-btn { background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer; padding:0 6px; }
   body.editing-locked .lockable-btn { pointer-events:none; opacity:.45; }
   body.editing-locked .lockable-btn::before { content:''; display:inline-block; width:11px; height:11px; vertical-align:-1px; margin-right:4px;

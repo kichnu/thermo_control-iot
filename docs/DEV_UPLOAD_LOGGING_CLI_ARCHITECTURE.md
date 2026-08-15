@@ -73,7 +73,9 @@ USB i OTA nie wykluczają się — oba environmenty mogą współistnieć w `pla
   kod trzeba więc wgrać raz przez `-e seeed_xiao_esp32s3` (USB); dopiero
   kolejne uploady mogą iść przez `-e seeed_xiao_esp32s3_ota`.
 
-Użycie: `export OTA_PASSWORD=haslo && pio run -e seeed_xiao_esp32s3_ota -t upload`.
+Użycie: `pio run -e seeed_xiao_esp32s3_ota -t upload` (hasło —
+`OTA_PASSWORD_192_168_10_4` — trzymane na stałe w `~/.secrets/iot.env`,
+sourcowane z `~/.zshrc`; zobacz README, sekcja "Build and upload").
 
 ### Gotcha: komp dev i ESP32 w różnych podsieciach (Mikrotik, izolacja IoT) — 2026-07-23
 
@@ -114,8 +116,8 @@ Fix (dwie części):
    # Mikrotik, przed uploadem
    /ip firewall filter enable [find comment="OTA-thermo-temp"]
 
-   # komp
-   export OTA_PASSWORD=... && pio run -e seeed_xiao_esp32s3_ota -t upload --upload-port 192.168.10.4
+   # komp (OTA_PASSWORD_192_168_10_4 stałe w ~/.secrets/iot.env)
+   pio run -e seeed_xiao_esp32s3_ota -t upload --upload-port 192.168.10.4
 
    # Mikrotik, po uploadzie
    /ip firewall filter disable [find comment="OTA-thermo-temp"]
