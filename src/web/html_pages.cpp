@@ -891,7 +891,8 @@ document.getElementById('btnEnergyReset').addEventListener('click', () => {
 });
 document.getElementById('btnLogout').addEventListener('click', async () => {
   await fetch('api/logout', { method: 'POST' });
-  window.location.href = 'login';
+  // Behind the VPS proxy go back to the gateway dashboard, locally to the login page
+  window.location.href = window.location.pathname.indexOf('/device/') !== -1 ? '/dashboard' : 'login';
 });
 
 document.getElementById('btnSaveThermo').addEventListener('click', async () => {
