@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <time.h>
 #include "../network/wifi_manager.h"
+#include "hw_health.h"
 
 
 // ===============================
@@ -29,6 +30,7 @@ bool useInternalRTC = false;
 bool rtcNeedsSync = false;
 bool batteryIssueDetected = false;
 bool timezoneConfigured = false;  // 🆕 Track if TZ is set
+static bool g_timeValid = false;  // last getUnixTimestamp() read the DS3231 with a valid year
 
 // Internal RTC fallback structure
 struct {
@@ -222,37 +224,23 @@ void initializeRTC() {
                 batteryIssueDetected = true;
                 rtcNeedsSync = true;
                 
-                // Ustaw na compile time aby wyczyścić flagę OSF
-                DateTime compileTime = DateTime(F(__DATE__), F(__TIME__));
-                rtc.adjust(compileTime);
-                delay(100);
-                
-                if (rtc.lostPower()) {
-                    LOG_ERROR("Failed to clear RTC OSF flag - hardware problem");
-                    useInternalRTC = true;
-                    rtcInitialized = true;
-                    initInternalTimeFromCompileTime();
-                    return;
-                }
-                
-                LOG_INFO("OSF flag cleared");
+                // The OSF flag is cleared only by writing the real time (setRTCFromNTP /
+                // retryRTC). Writing the compile time here would clear it too, and the
+                // next boot would take that wrong time as valid.
                 LOG_WARNING("⚠️ Battery issue detected - replace CR2032 battery");
-                
-                // Próba synchronizacji z NTP
-                LOG_INFO("Attempting immediate NTP sync after battery loss...");
-                
                 if (setRTCFromNTP()) {
-                    LOG_INFO("✅ RTC synchronized with NTP after battery replacement");
-                    // LOG_INFO("Battery warning cleared");
-                    // batteryIssueDetected = false;  // Clear flag after successful NTP sync
+                    LOG_INFO("✅ RTC synchronized with NTP after battery loss");
                     rtcNeedsSync = false;
                     rtcInitialized = true;
                     useInternalRTC = false;
                     return;
-                } else {
-                    LOG_WARNING("⚠️ NTP sync failed - RTC will use compile time until next sync");
-                    LOG_INFO("System will retry NTP sync every hour");
                 }
+                // No Wi-Fi yet at boot: ESP32 time until retryRTC() sets the DS3231 from NTP
+                LOG_WARNING("⚠️ NTP not available yet — DS3231 set from NTP at runtime (hw_health)");
+                useInternalRTC = true;
+                rtcInitialized = true;
+                initInternalTimeFromCompileTime();
+                return;
             }
             
             // Weryfikacja czasu RTC
@@ -419,7 +407,12 @@ String getCurrentTimestamp() {
     return String(buffer);
 }
 
+bool isUnixTimeValid() {
+    return g_timeValid;
+}
+
 unsigned long getUnixTimestamp() {
+    g_timeValid = false;
     if (!rtcInitialized) {
         return 1609459200;  // 2021-01-01 00:00:00 UTC
     }
@@ -456,6 +449,7 @@ unsigned long getUnixTimestamp() {
         }
         
         if (!validRead) {
+            noteRtcIoError();
             static uint32_t lastError = 0;
             if (millis() - lastError > 10000) {
                 LOG_ERROR("RTC read failed in getUnixTimestamp(), year: %d", now.year());
@@ -465,6 +459,7 @@ unsigned long getUnixTimestamp() {
             return 1735689600;  // 2025-01-01 00:00:00 UTC
         }
         
+        g_timeValid = true;
         return now.unixtime();
     }
 }
@@ -480,6 +475,51 @@ bool isRTCWorking() {
         DateTime now = rtc.now();
         return (now.year() >= 2020 && now.year() <= 2035);
     }
+}
+
+// The boot init runs before Wi-Fi, so NTP never helps there. Here: a DS3231 that
+// answers with a valid time and kept its power is taken back at once, otherwise
+// it is set from NTP once SNTP (started here, runs in the background) has the time
+bool retryRTC() {
+    if (!useInternalRTC && !rtcNeedsSync) return true;
+
+    Wire.beginTransmission(0x68);
+    if (Wire.endTransmission() != 0 || !rtc.begin()) return false;
+    DateTime t = rtc.now();
+    bool valid = t.year() >= 2024 && t.year() <= 2035;
+    if (useInternalRTC && valid && !rtc.lostPower() && !batteryIssueDetected) {
+        useInternalRTC = false;
+        rtcNeedsSync   = false;
+        rtcInitialized = true;
+        LOG_INFO("RTC: DS3231 answers with a valid time — back in use");
+        return true;
+    }
+
+    if (!isWiFiConnected()) return false;
+    static bool sntpStarted = false;
+    if (!sntpStarted) {
+        configTzTime(POLAND_TZ, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
+        sntpStarted = true;
+        LOG_INFO("RTC: NTP sync started in the background");
+        return false;
+    }
+    time_t now = 0;
+    time(&now);
+    if (now < 1600000000) return false;   // no NTP time yet
+
+    rtc.adjust(DateTime((uint32_t)now));  // also clears OSF
+    t = rtc.now();
+    if (t.year() < 2024 || t.year() > 2035) {
+        LOG_ERROR("RTC: DS3231 set from NTP but reads back an invalid year %d", t.year());
+        return false;
+    }
+    useInternalRTC = false;
+    rtcNeedsSync   = false;
+    rtcInitialized = true;
+    lastNTPSync    = millis();
+    LOG_INFO("RTC: DS3231 set from NTP (%04d-%02d-%02d %02d:%02d:%02d UTC) — in use",
+             t.year(), t.month(), t.day(), t.hour(), t.minute(), t.second());
+    return true;
 }
 
 String getRTCInfo() {

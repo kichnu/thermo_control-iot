@@ -68,6 +68,12 @@ Alarms (buzzer, see `src/algorithm/temp_algorithm.cpp`):
 - **TEMP_HIGH** — temp above `fan_on_point + alarm_delta_high` (1.5°C default, measured from fan_on_point not target_temp), self-heals once back in range
 - **TREND** — heater ON continuously ≥ `trend_window_min` (60 min) without a `trend_alarm_delta` (0.2°C) rise — suspected heater/flow failure
 - **SENSOR_FAULT** — STS35 invalid past a threshold count — critical latch (heater/fan emergency-off), needs a manual reset (`/api/reset-sensor-fault`)
+- **HARDWARE** — FRAM, DS3231 RTC or Wi-Fi credentials missing from FRAM (build-time fallback in use), checked
+  at boot, every 60 s and after a failed transfer (`src/hardware/hw_health.*`). Latched critical alarm: continuous
+  buzzer (not silenced by Mute or Service Mode), red banner in the GUI, `hw_alarm*` in `/api/status`,
+  `alarm` / `alarm_text` in `/api/health`. "Acknowledge" (`/api/hw-alarm-ack`) clears only the blocks that work
+  again; the latch survives software restarts. Temperature control keeps running (it needs only the STS35).
+  FRAM missing at boot → restart once it answers (max 3 per latch). RTC is retried at runtime and set from NTP.
 
 Thresholds are configurable via `/api/thermo-config` (GUI). Full rationale for
 choosing ON/OFF+SSR over PID: `docs/ALGORITHM_DECISION.md`.
@@ -141,6 +147,7 @@ generated header at build time. Not set = no fallback. Running on the fallback r
 | `/api/thermo-config` | GET/POST | Algorithm thresholds |
 | `/api/mute-alarm` | POST | Silence active alarms (buzzer) |
 | `/api/reset-sensor-fault` | POST | Clear the SENSOR_FAULT latch |
+| `/api/hw-alarm-ack` | POST | Acknowledge the HARDWARE alarm (clears what works again) |
 | `/api/system-toggle` | POST | Auto Mode / Service Mode |
 | `/api/energy`, `/api/energy-reset-day`, `/api/energy-reset-total` | GET/POST | Energy counter |
 | `/api/test/fan`, `/api/test/heater` | POST | Manual override (test) |
@@ -161,6 +168,7 @@ generated header at build time. Not set = no fallback. Running on the fallback r
 0x1B90–0x1B9B   LockPin
 0x1BA0–0x1CA1   free (was C-09 deviation state/reasons, removed 2026-07-24)
 0x1CA2–0x1CA9   EnergyResetInfo
+0x1FFF          Health-check scratch byte (hw_health)
 ```
 
 ## Source structure

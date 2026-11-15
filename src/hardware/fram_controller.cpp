@@ -5,15 +5,34 @@
 #include <Adafruit_FRAM_SPI.h>
 #include "../crypto/fram_encryption.h"
 #include "../algorithm/algorithm_config.h"
+#include "hw_health.h"
 
 Adafruit_FRAM_SPI fram(FRAM_SPI_CS_PIN, &SPI, 1000000);
 bool framInitialized = false;
 
 // MB85RS64V (SPI FRAM) requires WREN before every write — the write-enable
 // latch auto-clears after each write cycle, so it must be re-asserted each time.
+// A failed transfer triggers an early health check (hw_health).
 static bool framWrite(uint32_t addr, const void* data, size_t len) {
     fram.writeEnable(true);
-    return fram.write(addr, (const uint8_t*)data, len);
+    bool ok = fram.write(addr, (const uint8_t*)data, len);
+    if (!ok) noteFramIoError();
+    return ok;
+}
+
+bool framProbe() {
+    SPI.begin(FRAM_SPI_SCK_PIN, FRAM_SPI_MISO_PIN, FRAM_SPI_MOSI_PIN, FRAM_SPI_CS_PIN);
+    return fram.begin();
+}
+
+bool framReadRaw(uint32_t addr, uint8_t* data, size_t len) {
+    if (!framInitialized) return false;
+    return fram.read(addr, data, len);
+}
+
+bool framWriteRaw(uint32_t addr, const uint8_t* data, size_t len) {
+    if (!framInitialized) return false;
+    return framWrite(addr, data, len);
 }
 
 bool isFramInitialized() {

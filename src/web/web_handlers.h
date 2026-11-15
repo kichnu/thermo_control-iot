@@ -37,6 +37,7 @@ void handleMuteAlarm(AsyncWebServerRequest* request);
 
 // SENSOR_FAULT to alarm krytyczny (latch) — nie wraca sam, wymaga tego wywołania
 void handleResetSensorFault(AsyncWebServerRequest* request);
+void handleHwAlarmAck(AsyncWebServerRequest* request);
 void handleSystemToggle(AsyncWebServerRequest* request);
 void handleEnergy(AsyncWebServerRequest* request);
 void handleEnergyResetDay(AsyncWebServerRequest* request);

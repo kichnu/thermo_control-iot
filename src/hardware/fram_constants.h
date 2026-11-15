@@ -79,7 +79,10 @@
 // (2026-07-18), osobno od EnergyStore (0x052E) żeby nie przesuwać layoutu
 #define FRAM_ADDR_ENERGY_RESET        0x1CA2  // EnergyResetInfo (8B)
 
-// 0x1CAA–0x1FFF: wolne (~854B rezerwa)
+// 0x1CAA–0x1FFE: wolne (~853B rezerwa)
+
+// Scratch byte of the health check (hw_health): written and read back every 60 s
+#define FRAM_ADDR_HEALTH_SCRATCH      0x1FFF
 
 // ============================================================
 // ENCRYPTION (credentials — bez zmian z ATO)

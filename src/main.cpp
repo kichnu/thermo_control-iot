@@ -12,6 +12,7 @@
 #include "hardware/fan_controller.h"
 #include "hardware/energy_meter.h"
 #include "hardware/buzzer_controller.h"
+#include "hardware/hw_health.h"
 #include "network/wifi_manager.h"
 #include "security/auth_manager.h"
 #include "security/session_manager.h"
@@ -130,7 +131,10 @@ void setup() {
     LOG_INFO("Thermo state: %s", thermoAlgorithm.getStateString());
     if (isWiFiConnected()) LOG_INFO("Dashboard: http://%s", getLocalIP().toString().c_str());
 
-    bool bootOk = isFramInitialized() && credentials_loaded && isRTCWorking();
+    // Critical blocks (FRAM, RTC, credentials in FRAM) — latched alarm, see hw_health.h
+    initHwHealth();
+    if (isHwFaultAlarm()) LOG_ERROR("CRITICAL: %s", getHwFaultText().c_str());
+    bool bootOk = !isHwFaultAlarm() && credentials_loaded;
     bootOk ? buzzerOK() : buzzerCritical();
 
     LOG_INFO("=== Init complete ===");
@@ -162,6 +166,17 @@ void loop() {
     // godziny + rollup dobowy ginęły bez śladu, bez żadnego retry. Oba
     // warunki muszą dzielić dokładnie tę samą bramkę czasową, żeby
     // checkLogRollover() miał gwarancję zadziałać przed restartem.
+    // Critical hardware: periodic check + buzzer. FRAM missing at boot answers
+    // again — restart re-reads the configuration and history from it
+    updateHwHealth();
+    if (isHwRecoveryRestartWanted()) {
+        noteHwRecoveryRestart();
+        heaterEmergencyOff();
+        fanEmergencyOff();
+        delay(1000);
+        ESP.restart();
+    }
+
     static unsigned long lastTick = 0;
     if (now - lastTick >= 100) {
         lastTick = now;

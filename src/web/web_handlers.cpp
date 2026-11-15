@@ -10,6 +10,7 @@
 #include "hardware/fram_controller.h"
 #include "hardware/buzzer_controller.h"
 #include "hardware/rtc_controller.h"
+#include "hardware/hw_health.h"
 #include "network/wifi_manager.h"
 #include "config/config.h"
 #include "web_server.h"
@@ -28,6 +29,7 @@ void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/thermo-config",    HTTP_POST, requireAuth(handleSetThermoConfig));
     server.on("/api/mute-alarm",       HTTP_POST, requireAuth(handleMuteAlarm));
     server.on("/api/reset-sensor-fault", HTTP_POST, requireAuth(handleResetSensorFault));
+    server.on("/api/hw-alarm-ack",     HTTP_POST, requireAuth(handleHwAlarmAck));
     server.on("/api/system-toggle",    HTTP_POST, requireAuth(handleSystemToggle));
     server.on("/api/energy",           HTTP_GET,  requireAuth(handleEnergy));
     server.on("/api/energy-reset-day", HTTP_POST, requireAuth(handleEnergyResetDay));
@@ -61,6 +63,13 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["auto_enable_remaining_s"] = getSystemAutoEnableRemainingS();
     doc["energy_kwh_today"]= getEnergyKwhToday();
     doc["wifi_connected"]  = isWiFiConnected();
+    // Critical hardware (hw_health): latched until it works again and is acknowledged
+    doc["hw_alarm"]        = isHwFaultAlarm();
+    doc["hw_alarm_text"]   = getHwFaultText();
+    doc["hw_alarm_since"]  = getHwFaultSinceTs();   // unix, 0 = unknown
+    doc["fram_ok"]         = !(getHwFaultActive() & HW_FAULT_FRAM);
+    doc["rtc_ok"]          = !(getHwFaultActive() & HW_FAULT_RTC);
+    doc["cred_ok"]         = !(getHwFaultActive() & HW_FAULT_CRED);
 
     String out;
     serializeJson(doc, out);
@@ -237,7 +246,7 @@ void handleSystemToggle(AsyncWebServerRequest* request) {
         // TempAlgorithm::update()), więc trzeba go wyciszyć jawnie tutaj.
         // _alarm_flags NIE są czyszczone — status ostatniego alarmu zostaje
         // widoczny w GUI, cichnie tylko dźwięk.
-        setBuzzerMode(BUZZER_OFF);
+        if (!isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);  // hardware alarm: only acknowledge silences it
     }
     request->send(200, "application/json", "{\"ok\":true}");
 }
@@ -347,6 +356,18 @@ void handleTestClearHistory(AsyncWebServerRequest* request) {
 // krytyczny — latch, nie wraca sam nawet gdy czujnik znów daje poprawne
 // odczyty). Jeśli usterka faktycznie wciąż trwa, kolejny update() i tak
 // natychmiast zatrzaśnie ponownie.
+// Acknowledge the latched hardware alarm: clears only the blocks that work again
+void handleHwAlarmAck(AsyncWebServerRequest* request) {
+    ackHwFaults();
+    JsonDocument doc;
+    doc["ok"]            = true;
+    doc["hw_alarm"]      = isHwFaultAlarm();
+    doc["hw_alarm_text"] = getHwFaultText();
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
+
 void handleResetSensorFault(AsyncWebServerRequest* request) {
     thermoAlgorithm.resetSensorFaultLatch();
     request->send(200, "application/json", "{\"ok\":true}");
@@ -421,6 +442,20 @@ void handleLogout(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"success\":true}");
 }
 
+// "status" stays "ok" (reachability contract of the VPS dashboard); "alarm" = a
+// critical alarm (latched hardware fault, latched sensor fault)
 void handleHealth(AsyncWebServerRequest* request) {
-    request->send(200, "application/json", "{\"status\":\"ok\"}");
+    JsonDocument doc;
+    doc["status"] = "ok";
+    String text;
+    if (isHwFaultAlarm()) text = getHwFaultText();
+    if (thermoAlgorithm.isSensorFaultLatched()) {
+        if (text.length()) text += " | ";
+        text += "STS35 sensor fault — heater and fan stopped";
+    }
+    doc["alarm"] = text.length() > 0;
+    if (text.length()) doc["alarm_text"] = text;
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
 }

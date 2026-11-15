@@ -6,6 +6,7 @@
 #include "hardware/rtc_controller.h"
 #include "hardware/fram_constants.h"
 #include "hardware/buzzer_controller.h"
+#include "hardware/hw_health.h"
 #include "core/logging.h"
 #include "config/config.h"
 
@@ -249,7 +250,7 @@ void TempAlgorithm::_updateAlarms(float temp) {
     }
 
     // Nic aktywnego — cisza (SENSOR obsługiwany osobno w update()).
-    if (_alarm_flags == 0) {
+    if (_alarm_flags == 0 && !isHwFaultAlarm()) {  // a latched hardware alarm keeps the buzzer on
         setBuzzerMode(BUZZER_OFF);
     }
 }
@@ -342,7 +343,7 @@ bool TempAlgorithm::setConfig(const ThermoConfig& cfg) {
 
 void TempAlgorithm::muteActiveAlarms() {
     _muted_flags |= _alarm_flags;  // wycisza tylko to, co jest aktywne w tej chwili
-    setBuzzerMode(BUZZER_OFF);
+    if (!isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);  // hardware alarm: only acknowledge silences it
 }
 
 const char* TempAlgorithm::getStateString() const {

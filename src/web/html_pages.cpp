@@ -267,6 +267,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
       </div>
     </div>
   </div>
+  <!-- Latched critical hardware alarm (FRAM / RTC / credentials, hw_health) — buzzer until acknowledged -->
+  <div id="hwAlarmBanner" style="display:none; margin-top:12px; color:var(--accent-red); font-weight:bold;">
+    <div>⚠ HARDWARE FAULT (critical): <span id="hwAlarmText"></span></div>
+    <button id="btnHwAck" class="danger" style="margin-top:8px;">Acknowledge</button>
+  </div>
 </div>
 
 <div class="card">
@@ -578,11 +583,14 @@ async function refresh() {
     if (d.alarm_flags & 0x02) flags.push('TEMP_HIGH');
     if (d.alarm_flags & 0x04) flags.push('TREND');
     if (d.alarm_flags & 0x08) flags.push('SENSOR');
+    document.getElementById('sensorFaultBanner').style.display = d.sensor_fault_latched ? 'block' : 'none';
+    if (d.hw_alarm) flags.push('HARDWARE');
     document.getElementById('alarms').textContent = flags.length ? flags.join(', ') : 'none';
     document.getElementById('alarms').classList.toggle('alarm', flags.length > 0);
-    document.getElementById('sensorFaultBanner').style.display = d.sensor_fault_latched ? 'block' : 'none';
+    document.getElementById('hwAlarmBanner').style.display = d.hw_alarm ? 'block' : 'none';
+    document.getElementById('hwAlarmText').textContent = d.hw_alarm_text || '';
 
-    const hasError = (d.alarm_flags !== 0) || d.sensor_fault_latched;
+    const hasError = (d.alarm_flags !== 0) || d.sensor_fault_latched || d.hw_alarm;
 
     // Kolor #temp wg stanu — priorytet: alarm (LOW dostaje wyraźny ciemny
     // niebieski zamiast czerwieni, żeby odróżnić od HIGH/TREND/SENSOR mimo
@@ -882,6 +890,13 @@ document.getElementById('btnResetSensor').addEventListener('click', () => {
     await fetch('api/reset-sensor-fault', { method: 'POST' });
     refresh();
   });
+});
+// Hardware alarm: acknowledge clears only the blocks that work again
+document.getElementById('btnHwAck').addEventListener('click', async () => {
+  const r = await fetch('api/hw-alarm-ack', { method: 'POST' });
+  const d = await r.json();
+  if (d.hw_alarm) showAlert('Alarm stays', 'Still failing: ' + d.hw_alarm_text, 'warn');
+  refresh();
 });
 document.getElementById('btnEnergyReset').addEventListener('click', () => {
   showConfirm('Reset total energy counter?', 'This permanently zeroes the total kWh counter. This cannot be undone.', 'warn', async () => {

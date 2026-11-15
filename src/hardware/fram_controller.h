@@ -9,6 +9,11 @@ bool initFRAM();
 bool isFramInitialized();
 bool framReconnect();
 bool verifyFRAM();
+bool framProbe();   // chip answers on SPI (device ID) — does not mark FRAM as initialized
+
+// Raw access for the health check (hw_health); false = FRAM not initialized
+bool framReadRaw(uint32_t addr, uint8_t* data, size_t len);
+bool framWriteRaw(uint32_t addr, const uint8_t* data, size_t len);
 
 // ===============================
 // FRAM CREDENTIALS SECTION
