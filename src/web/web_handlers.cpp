@@ -246,7 +246,8 @@ void handleSystemToggle(AsyncWebServerRequest* request) {
         // TempAlgorithm::update()), więc trzeba go wyciszyć jawnie tutaj.
         // _alarm_flags NIE są czyszczone — status ostatniego alarmu zostaje
         // widoczny w GUI, cichnie tylko dźwięk.
-        if (!isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);  // hardware alarm: only acknowledge silences it
+        // Latched alarms (hardware, sensor fault) need intervention — Service Mode does not silence them
+        if (!isHwFaultAlarm() && !thermoAlgorithm.isSensorFaultLatched()) setBuzzerMode(BUZZER_OFF);
     }
     request->send(200, "application/json", "{\"ok\":true}");
 }

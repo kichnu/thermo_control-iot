@@ -6,7 +6,7 @@
 
 // Automat sterowania temperaturą:
 //  - histereza symetryczna (jeden parametr/kanał, OFF przy target_temp) dla SSR grzałki i PWM wentylatora
-//  - detekcja alarmu trendu: grzałka ON od >= trend_window_min minut bez wystarczającego wzrostu temp.
+//  - trend warning (no buzzer): heater ON for >= trend_window_min minutes without enough temperature rise
 //  - SENSOR_FAULT to awaria KRYTYCZNA — latch, grzałka/fan zamrożone do ręcznego resetu
 //    (resetSensorFaultLatch()), nawet gdy czujnik sam wróci do zdrowia
 //  - logowanie: bufor godzinowy (RAM-owy accumulator → FRAM co godzinę),
@@ -23,10 +23,11 @@ public:
     const char*    getStateString() const;
     uint8_t        getAlarmFlags() const    { return _alarm_flags; }
     bool           isAlarmActive() const    { return _alarm_flags != 0; }
-    // Wycisza buzzer dla alarmów aktywnych W TEJ CHWILI (web API). _alarm_flags
-    // zostaje (widoczne w GUI dopóki warunek trwa) — wyciszenie dotyczy tylko
-    // dźwięku i tylko bieżącego epizodu: gdy dany warunek ustąpi i pojawi się
-    // ponownie, znów zadźwięczy (patrz _setAlarmFlag()).
+    // Silences TEMP_LOW / TEMP_HIGH active right now (web API). _alarm_flags stay
+    // (visible while the condition lasts); the mute covers only the current episode:
+    // when the condition clears and comes back, it sounds again (see _setAlarmFlag()).
+    // Not for SENSOR_FAULT / hardware alarm (intervention: reset / acknowledge);
+    // TREND is a warning without a buzzer.
     void           muteActiveAlarms();
 
     // SENSOR_FAULT jako awaria krytyczna (2026-07-14, user): raz zatrzaśnięta,

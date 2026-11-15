@@ -106,8 +106,8 @@ STATE_IDLE ⇄ STATE_HEATING   (SSR ON below target - heat_hyst, OFF at target_t
 STATE_IDLE ⇄ STATE_COOLING   (fan ON above fan_on_point = target + thermal_buffer,
                                OFF at fan_on_point - cool_start — see below)
 STATE_ALARM_LOW / STATE_ALARM_HIGH  — temp outside [target - alarm_delta_low, fan_on_point + alarm_delta_high], self-heals
-STATE_TREND_ALARM            — heater ON continuously ≥ trend_window_min without enough rise,
-                                self-heals (fixed 2026-07-24 — used to stick in GUI, see code comment)
+STATE_TREND_ALARM            — no longer set (2026-11-15): TREND is a warning flag only (no buzzer),
+                                the state stays HEATING while the heater runs without enough rise
 STATE_SENSOR_FAULT           — STS35 invalid past threshold, LATCHED — heater/fan
                                 emergency-off, needs manual reset (resetSensorFaultLatch())
 ```
@@ -183,7 +183,7 @@ GET  /api/status                          full system status JSON
 GET  /api/history-hourly | /api/history-daily
 GET  /api/alarm-events
 GET|POST /api/thermo-config               algorithm thresholds
-POST /api/mute-alarm                      silence active buzzer, flags stay visible
+POST /api/mute-alarm                      silence active TEMP_LOW/HIGH (episode), flags stay visible
 POST /api/reset-sensor-fault              clears STATE_SENSOR_FAULT latch
 POST /api/system-toggle                   Auto Mode / Service Mode (15-min auto re-enable)
 GET|POST /api/energy | /api/energy-reset-day | /api/energy-reset-total

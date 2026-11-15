@@ -63,11 +63,15 @@ Validated: `thermal_buffer >= cool_start` (else OFF point dips below `target_tem
 and fights the heater), `cool_full < alarm_delta_high` (else ALARM_HIGH could fire
 mid-ramp before the fan reaches 100%).
 
-Alarms (buzzer, see `src/algorithm/temp_algorithm.cpp`):
-- **TEMP_LOW** — temp below `target - alarm_delta_low` (2.0°C default), self-heals once back in range
-- **TEMP_HIGH** — temp above `fan_on_point + alarm_delta_high` (1.5°C default, measured from fan_on_point not target_temp), self-heals once back in range
-- **TREND** — heater ON continuously ≥ `trend_window_min` (60 min) without a `trend_alarm_delta` (0.2°C) rise — suspected heater/flow failure
-- **SENSOR_FAULT** — STS35 invalid past a threshold count — critical latch (heater/fan emergency-off), needs a manual reset (`/api/reset-sensor-fault`)
+Alarms (see `src/algorithm/temp_algorithm.cpp`). Rule: an alarm that needs intervention is latched and
+cannot be muted — the buzzer stops only after the fix and the reset; self-clearing temperature alarms can be
+muted for the current episode (the cause may be out of reach, e.g. a heat wave).
+- **TEMP_LOW** — temp below `target - alarm_delta_low` (2.0°C default), buzzer, self-heals once back in range; Mute
+- **TEMP_HIGH** — temp above `fan_on_point + alarm_delta_high` (1.5°C default, measured from fan_on_point not target_temp), buzzer, self-heals once back in range; Mute
+- **TREND** — warning only (no buzzer, yellow in the GUI, yellow dot on the charts): heater ON continuously ≥
+  `trend_window_min` (60 min) without a `trend_alarm_delta` (0.2°C) rise — suspected heater power / configuration.
+  Lasts while the heater runs without the rise; the tank itself is protected by TEMP_LOW / TEMP_HIGH
+- **SENSOR_FAULT** — STS35 invalid past a threshold count — critical latch (heater/fan emergency-off), buzzer not silenced by Mute or Service Mode, needs a manual reset (`/api/reset-sensor-fault`)
 - **HARDWARE** — FRAM, DS3231 RTC or Wi-Fi credentials missing from FRAM (build-time fallback in use), checked
   at boot, every 60 s and after a failed transfer (`src/hardware/hw_health.*`). Latched critical alarm: continuous
   buzzer (not silenced by Mute or Service Mode), red banner in the GUI, `hw_alarm*` in `/api/status`,
@@ -145,7 +149,7 @@ generated header at build time. Not set = no fallback. Running on the fallback r
 | `/api/history-hourly`, `/api/history-daily` | GET | Temperature-average ring buffers |
 | `/api/alarm-events` | GET | Alarm event log |
 | `/api/thermo-config` | GET/POST | Algorithm thresholds |
-| `/api/mute-alarm` | POST | Silence active alarms (buzzer) |
+| `/api/mute-alarm` | POST | Silence active TEMP_LOW / TEMP_HIGH (current episode) |
 | `/api/reset-sensor-fault` | POST | Clear the SENSOR_FAULT latch |
 | `/api/hw-alarm-ack` | POST | Acknowledge the HARDWARE alarm (clears what works again) |
 | `/api/system-toggle` | POST | Auto Mode / Service Mode |

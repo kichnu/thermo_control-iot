@@ -42,11 +42,12 @@ void TempAlgorithm::update() {
     }
 
     if (_sensorFaultLatched) {
-        // Awaria krytyczna, zatrzaśnięta — grzałka/fan zamrożone dopóki ktoś
-        // ręcznie nie potwierdzi (resetSensorFaultLatch()), NIEZALEŻNIE od tego,
-        // czy czujnik akurat teraz daje poprawne odczyty.
+        // Latched critical fault — heater/fan frozen until a manual reset
+        // (resetSensorFaultLatch()), even if the sensor reads fine again.
+        // Requires intervention: no mute, the buzzer stops only with the reset.
         heaterEmergencyOff();
         fanEmergencyOff();
+        setBuzzerMode(BUZZER_ALARM);
         return;
     }
 
@@ -58,7 +59,7 @@ void TempAlgorithm::update() {
             _sensorFaultLatched = true;
             heaterEmergencyOff();
             fanEmergencyOff();
-            if (!(_muted_flags & ALARM_FLAG_SENSOR)) setBuzzerMode(BUZZER_ALARM);
+            setBuzzerMode(BUZZER_ALARM);  // not mutable — reset only
         }
         return;  // brak ważnego odczytu — nic do zaakumulowania w buforze godzinowym
     }
@@ -228,31 +229,20 @@ void TempAlgorithm::_updateAlarms(float temp) {
         return;
     }
 
-    // Temp wróciła do zakresu / trend ustąpił — wyjdź ze stanu alarmowego.
-    // STATE_TREND_ALARM dołączone tu (2026-07-24, fix zgłoszonego buga): bez tego
-    // _state zostawał na "TREND_ALARM" bezterminowo w GUI, mimo że _alarm_flags/
-    // buzzer już się poprawnie czyściły przez _setAlarmFlag() niżej — bo
-    // _checkTrendAlarm() wymaga _state==STATE_HEATING, więc po pierwszym
-    // zadziałaniu (state->TREND_ALARM) warunek trend_now i tak od razu wypada
-    // false na kolejnym cyklu; reset do IDLE tutaj tylko koryguje wyświetlaną
-    // etykietę stanu, zgodnie z tym co już się faktycznie dzieje z flagą/buzzerem.
+    // Temperature back in range — leave the alarm state (STATE_TREND_ALARM: old firmware only)
     if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH || _state == STATE_TREND_ALARM) {
         _state = STATE_IDLE;
     }
 
-    // Trend: grzałka ON od >= trend_window_min minut bez wystarczającego wzrostu temp.
-    bool trend_now = _checkTrendAlarm(temp);
-    _setAlarmFlag(ALARM_FLAG_TREND, trend_now, temp);
-    if (trend_now) {
-        _state = STATE_TREND_ALARM;
-        if (!(_muted_flags & ALARM_FLAG_TREND)) setBuzzerMode(BUZZER_WARNING);
-        return;
-    }
+    // Trend (heater ineffective): a warning only — no buzzer, no state change, regulation goes on
+    // (2026-11-15: may be configuration / heater power; TEMP_LOW / TEMP_HIGH protect the tank).
+    // The state stays HEATING, so the flag lasts while the heater runs without the rise and clears
+    // once the temperature rises by trend_alarm_delta or the heating ends. (Before, the switch to
+    // STATE_TREND_ALARM cleared it on the next cycle — the warning flashed for ~15 s every hour.)
+    _setAlarmFlag(ALARM_FLAG_TREND, _checkTrendAlarm(temp), temp);
 
-    // Nic aktywnego — cisza (SENSOR obsługiwany osobno w update()).
-    if (_alarm_flags == 0 && !isHwFaultAlarm()) {  // a latched hardware alarm keeps the buzzer on
-        setBuzzerMode(BUZZER_OFF);
-    }
+    // No sounding alarm (SENSOR handled in update(); a latched hardware alarm keeps the buzzer on)
+    if (!isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);
 }
 
 void TempAlgorithm::_accumulateHourlySample(float temp) {
@@ -342,8 +332,12 @@ bool TempAlgorithm::setConfig(const ThermoConfig& cfg) {
 }
 
 void TempAlgorithm::muteActiveAlarms() {
-    _muted_flags |= _alarm_flags;  // wycisza tylko to, co jest aktywne w tej chwili
-    if (!isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);  // hardware alarm: only acknowledge silences it
+    // Only the self-clearing temperature alarms, only what is active now. Sensor fault and the
+    // hardware alarm need intervention (reset / acknowledge); TREND has no buzzer.
+    uint8_t mutable_flags = _alarm_flags & (ALARM_FLAG_TEMP_LOW | ALARM_FLAG_TEMP_HIGH);
+    if (!mutable_flags) return;
+    _muted_flags |= mutable_flags;
+    if (!_sensorFaultLatched && !isHwFaultAlarm()) setBuzzerMode(BUZZER_OFF);
 }
 
 const char* TempAlgorithm::getStateString() const {
