@@ -158,8 +158,7 @@ SPI (MB85RS64V, 8KB, 0x0000–0x1FFF). Defined in `hardware/fram_constants.h`:
 
 ### Hardware Pin Configuration (Waveshare ESP32-S3-Pico)
 
-Defined in `hardware/hardware_pins.h` (source of truth — `docs/ARCHITECTURE_SKELETON.md`
-§2 has an older, now-incorrect pin table, kept only as historical draft):
+Defined in `hardware/hardware_pins.h` (source of truth):
 
 - GPIO 1: `BUZZER_PIN` — HIGH = ON
 - GPIO 2: `FAN_PWM_PIN` — LEDC PWM
@@ -194,7 +193,7 @@ POST /api/verify-pin                      lock-PIN gate for settings edits
 
 ### Dev tooling (OTA + remote logs)
 
-Concept + implementation notes: `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`.
+Pattern and gotchas: `~/dev-knowledge/esp32/ota-wifi-upload.md`; summary in README.
 
 - `platformio.ini`: `[env:seeed_xiao_esp32s3_ota]` (`extends` the main env,
   `upload_protocol = espota`). `default_envs = seeed_xiao_esp32s3` keeps bare
@@ -277,7 +276,7 @@ limiting (`rate_limiter.cpp`) — constants in `config.h` (`SESSION_TIMEOUT_MS`,
 `MAX_REQUESTS_PER_SECOND`, `MAX_FAILED_ATTEMPTS`, `BLOCK_DURATION_MS`).
 `checkAuthentication()` bypasses the session-cookie check for requests whose
 `remoteIP()` matches `TRUSTED_PROXY_IP` — this is the VPS/nginx reverse-proxy path
-(`10.99.0.1`); see `docs/NETWORK_TOPOLOGY_ESP32.md` for the full topology and the
+(`10.99.0.1`); see `docs/NETWORK_TOPOLOGY_ESP32.md` in the `home_iot-vps` repo for the full topology and the
 firmware-side gotchas found while integrating it (relative paths required under
 `/device/thermo/`, trusted-proxy auth bypass implications).
 
@@ -292,6 +291,5 @@ firmware-side gotchas found while integrating it (relative paths required under
 ## Docs (`docs/`)
 
 `FEATURES_REGISTRY.md` is the most actively maintained scope/roadmap reference.
-`ARCHITECTURE_SKELETON.md` and `ALGORITHM_DECISION.md` are pre-implementation design
-docs — read them for rationale, but treat any code snippet/pin table inside as a
-historical snapshot, not current truth; the actual header files always win.
+`ALGORITHM_DECISION.md` — design rationale only; the header files always win.
+`ENERGY_DAILY_RING_ANALYSIS.md` — postponed feature analysis. `ZGODNOSC_REGUL.md` — global rules compliance.

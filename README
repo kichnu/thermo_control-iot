@@ -26,7 +26,7 @@ needed to build/upload/operate the firmware.
 **Partitions:** `board_build.partitions = app3M_fat9M_16MB.csv` (two 3MB OTA
 slots, sized for the real 16MB flash — not the board profile's default). A
 mismatched single-slot table here previously caused a hard crash on OTA
-upload; see `docs/OTA_WIFI_UPLOAD_PATTERN.md` before changing this.
+upload — keep two OTA slots when changing this.
 
 ### Pins (`src/hardware/hardware_pins.h` — source of truth)
 
@@ -98,10 +98,10 @@ pio device monitor --port socket://<device-ip>:8880
 mechanism works until firmware that includes it is already running
 (`ArduinoOTA`/`WiFiServer` don't exist in older builds). Subsequent uploads can go
 through `-e seeed_xiao_esp32s3_ota`. Verified working end-to-end on hardware
-(2026-07-24). Details, full gotcha history (`default_envs`, VLAN/firewall,
-partition-scheme crash, one log-socket client at a time, etc.) →
-`docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md`; short portable checklist for
-reusing this in other projects → `docs/OTA_WIFI_UPLOAD_PATTERN.md`.
+(2026-07-24). Gotchas: `default_envs` keeps a bare `pio run` from building the OTA env;
+the laptop and the device are in different subnets (MikroTik, isolated IoT VLAN), so
+the return TCP connection needs a firewall rule — hence the fixed `--host_port=8266`;
+the log socket accepts one client at a time.
 
 **`OTA_PASSWORD_192_168_10_4` setup:** the shell variable is named after this
 device's local IP (dots → underscores), not the project name — several IoT
@@ -196,15 +196,15 @@ src/
 
 ## Documentation (`docs/`)
 
-| File | Content | Note |
-|---|---|---|
-| `FEATURES_REGISTRY.md` | Feature registry, v1/v2/rejected, kept up to date | most current reference for scope |
-| `ARCHITECTURE_SKELETON.md` | Architecture design predating implementation start | ⚠️ banner in file — §2 (pin table) is stale, source of truth: `hardware_pins.h` |
-| `ALGORITHM_DECISION.md` | Rationale for ON/OFF+SSR vs PID/relay, energy measurement | ⚠️ banner in file — §7–8 (C structs) are stale, source of truth: `algorithm_config.h` |
-| `DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md` | OTA / log-socket / CLI — dev tooling | points 1–2 implemented and verified on hardware (2026-07-24); point 3 doesn't apply to this repo |
-| `OTA_WIFI_UPLOAD_PATTERN.md` | Short, portable OTA setup checklist — for reuse in Dolewka/Dozownik | pointer, not a substitute for the architecture doc |
-| `NETWORK_TOPOLOGY_ESP32.md` | VPS/WireGuard/nginx topology + firmware-side integration gotchas | — |
-| `ESP32-S3-Pico.png` | Board pinout (image) | — |
+| File | Content |
+|---|---|
+| `FEATURES_REGISTRY.md` | Feature registry (v1 / v2 / rejected) — scope and roadmap |
+| `ALGORITHM_DECISION.md` | Rationale for ON/OFF + SSR vs PID / relay, energy measurement |
+| `ENERGY_DAILY_RING_ANALYSIS.md` | Daily energy history — postponed until the FRAM upgrade (8 KB → 32 KB) |
+| `ZGODNOSC_REGUL.md` | Compliance with the global rules (secrets, critical hardware alarm) |
+| `ESP32-S3-Pico.png` | Board pinout (image) |
+
+VPS / WireGuard / nginx topology: `docs/NETWORK_TOPOLOGY_ESP32.md` in the `home_iot-vps` repo.
 
 **Note:** `CLAUDE.md` — rewritten (2026-07-20); it used to be a leftover from the ATO
 (automated water top-off) project it was copied from.

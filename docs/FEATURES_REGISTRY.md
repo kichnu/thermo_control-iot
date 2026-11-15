@@ -69,7 +69,7 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 
 | ID   | Funkcjonalność                                      | Status | Uwagi                                    |
 |------|-----------------------------------------------------|--------|------------------------------------------|
-| E-01 | Multi-res ring buffer w FRAM                        | [v1]   | patrz ARCHITECTURE_SKELETON §5           |
+| E-01 | Multi-res ring buffer w FRAM                        | [v1]   | `src/hardware/fram_constants.h`           |
 | E-02 | Heater duty cycle per rekord                        | [v1]   | heater_on_s lub heater_pct               |
 | E-03 | Energia kWh z impulsów miernika (narastająco)       | [v1]   | uint32_t licznik impulsów w FRAM         |
 | E-04 | Energia obliczona z SSR (heater_watt × duty)        | [v1]   | no hardware required                     |
@@ -88,7 +88,7 @@ Status: [ ] = odrzucone, [v1] = pierwsza wersja, [v2] = przyszła wersja, [OUT] 
 | F-02 | REST API (auth cookie)                              | [v1]   | z projektu ATO, nowe endpointy           |
 | F-03 | NTP sync przez RTC DS3231                           | [v1]   | z projektu ATO bez zmian                 |
 | F-04 | MQTT broker client                                  | [v2]   | PubSubClient library                     |
-| F-05 | OTA firmware update via web                         | [ ]    | ryzyko brick bez rollback, pominąć; nie mylić z dev-tooling ArduinoOTA (zaimplementowane, USB-only fallback) — patrz `docs/DEV_UPLOAD_LOGGING_CLI_ARCHITECTURE.md` §1 |
+| F-05 | OTA firmware update via web                         | [ ]    | ryzyko brick bez rollback, pominąć; nie mylić z dev-tooling ArduinoOTA (zaimplementowane, USB-only fallback) |
 
 ---
 

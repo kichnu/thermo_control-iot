@@ -2,11 +2,7 @@
 
 > Status: ZAMKNIĘTA. Decyzja: ON/OFF histereza via SSR.
 
-> ⚠️ **Uzasadnienie (§1–6) wciąż aktualne. Struktury C w §7–8 — nie.**
-> `ThermoConfig`/`TempRecord` poniżej to migawka sprzed implementacji: pola
-> zmieniły się (m.in. zniknęło `hysteresis_band`, doszły `trend_alarm_delta`,
-> `pulses_per_kwh`, `trend_window_min`, `fan_min_pct`), inny jest też rozmiar.
-> Źródło prawdy: `src/algorithm/algorithm_config.h`.
+> Uzasadnienie wyboru (bez struktur danych — źródło prawdy: `src/algorithm/algorithm_config.h`).
 
 ---
 
@@ -150,39 +146,3 @@ HEATING → IDLE:  temp wzrosła powyżej (T_set - heat_hyst + hysteresis_band)
 IDLE → COOLING:  temp wzrosła powyżej (T_set + cool_hyst)
 COOLING → IDLE:  temp spadła poniżej (T_set + cool_hyst - hysteresis_band)
 ```
-
----
-
-## 7. ThermoConfig — finalne pola
-
-```c
-struct ThermoConfig {           // FRAM-persisted
-    float   target_temp;        // temp zadana [°C],           default: 25.0
-    float   heat_hyst;          // ON poniżej T - heat_hyst,   default: 0.3
-    float   cool_hyst;          // ON powyżej T + cool_hyst,   default: 0.5
-    float   hysteresis_band;    // OFF offset (zapobiega migot),default: 0.2
-    float   alarm_delta_low;    // ALARM poniżej T - X,        default: 2.0
-    float   alarm_delta_high;   // ALARM powyżej T + X,        default: 1.5
-    float   temp_offset;        // kalibracja STS35 [°C],      default: 0.0
-    float   heater_watt;        // moc znamionowa grzałek [W], default: 0.0
-    uint8_t is_configured;      // 0xA9 = ważna konfiguracja
-    uint8_t _pad[3];
-};  // 32B + 4B pad = 36B → +2B checksum = 38B w FRAM
-```
-
----
-
-## 8. TempRecord — pola w ring buffer
-
-```c
-struct TempRecord {             // 12B — FRAM ring buffer
-    uint32_t timestamp;         // Unix UTC
-    int16_t  temp_x10;          // temp × 10 (np. 250 = 25.0°C)
-    uint8_t  state;             // AlgorithmState (IDLE/HEATING/COOLING/ALARM/FAULT)
-    uint8_t  alarm_flags;       // bitmaska alarmów
-    uint16_t heater_on_s;       // czas SSR ON w tej minucie [s] (0–60)
-    uint16_t _pad;
-};  // 12B
-```
-
-`heater_on_s` per rekord → backend może liczyć kWh za dowolny okres.
