@@ -99,11 +99,11 @@ bool areCredentialsLoaded() {
 void fallbackToHardcodedCredentials() {
     LOG_WARNING("");
     LOG_WARNING("====================================");
-    LOG_WARNING("🔄 Falling back to placeholder credentials");
+    LOG_WARNING("🔄 Falling back to build-time fallback credentials");
     LOG_WARNING("⚠️ Web authentication will be DISABLED until FRAM is programmed!");
     LOG_WARNING("====================================");
     
-    // Use placeholder credentials from config.h - NOT FUNCTIONAL!
+    // Fallback Wi-Fi from wifi_secret.h (~/.secrets/iot.env at build time, may be empty)
     dynamicCredentials.wifi_ssid = String(WIFI_SSID);
     dynamicCredentials.wifi_password = String(WIFI_PASSWORD);
     dynamicCredentials.device_id = String(DEVICE_ID);
@@ -118,7 +118,7 @@ void fallbackToHardcodedCredentials() {
     
     LOG_INFO("");
     LOG_INFO("====================================");
-    LOG_INFO("📌 Placeholder fallback credentials (NON-FUNCTIONAL):");
+    LOG_INFO("📌 Fallback credentials (no web authentication):");
     LOG_INFO("  Device ID: %s", dynamicCredentials.device_id.c_str());
     LOG_INFO("  WiFi SSID: %s", dynamicCredentials.wifi_ssid.c_str());
     LOG_INFO("  Admin Hash: %s", dynamicCredentials.admin_password_hash.c_str());

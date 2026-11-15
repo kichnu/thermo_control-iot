@@ -125,6 +125,10 @@ contains shell-special characters (`#`, `$`, spaces).
 3. Enter WiFi credentials and an admin password.
 4. Reboot → firmware loads credentials from FRAM (AES-256), connects to the configured network.
 
+Fallback Wi-Fi (only without credentials in FRAM) is not in the repo: `scripts/wifi_secret.py` reads
+`IOT_WIFI_FALLBACK_SSID` / `IOT_WIFI_FALLBACK_PASSWORD` from the environment (`~/.secrets/iot.env`) into a
+generated header at build time. Not set = no fallback. Running on the fallback raises the HARDWARE alarm.
+
 ## API (session-authenticated except `/api/health`)
 
 | Endpoint | Method | Description |
