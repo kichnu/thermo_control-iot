@@ -22,6 +22,7 @@ public:
     AlgorithmState getState() const         { return _state; }
     const char*    getStateString() const;
     uint8_t        getAlarmFlags() const    { return _alarm_flags; }
+    uint8_t        getMutedFlags() const    { return _muted_flags & _alarm_flags; }  // muted and still active
     bool           isAlarmActive() const    { return _alarm_flags != 0; }
     // Silences TEMP_LOW / TEMP_HIGH active right now (web API). _alarm_flags stay
     // (visible while the condition lasts); the mute covers only the current episode:

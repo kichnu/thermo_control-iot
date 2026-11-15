@@ -139,6 +139,14 @@ Fallback Wi-Fi (only without credentials in FRAM) is not in the repo: `scripts/w
 `IOT_WIFI_FALLBACK_SSID` / `IOT_WIFI_FALLBACK_PASSWORD` from the environment (`~/.secrets/iot.env`) into a
 generated header at build time. Not set = no fallback. Running on the fallback raises the HARDWARE alarm.
 
+## Touch panel (ESP-NOW)
+
+Status broadcast to the touch panel (`home_display-iot`) every 5 s and right after a change
+(`src/network/espnow_panel.*`, wire format `src/network/thermo_proto.h` — the panel keeps a copy):
+temperature, state, heater / fan, alarms and muted alarms, Service Mode countdown. Own frame magic and a key
+derived from the Wi-Fi password (HMAC-SHA256/16), `WiFi.setSleep(false)`. Commands from the panel: next stage.
+Counters and `fw_version` in `/api/status`.
+
 ## API (session-authenticated except `/api/health`)
 
 | Endpoint | Method | Description |

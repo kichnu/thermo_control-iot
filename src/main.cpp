@@ -14,6 +14,7 @@
 #include "hardware/buzzer_controller.h"
 #include "hardware/hw_health.h"
 #include "network/wifi_manager.h"
+#include "network/espnow_panel.h"
 #include "security/auth_manager.h"
 #include "security/session_manager.h"
 #include "security/rate_limiter.h"
@@ -116,6 +117,9 @@ void setup() {
     initRateLimiter();
     initWebServer();
 
+    // ESP-NOW link to the touch panel (status broadcast) — needs Wi-Fi STA + password (key)
+    initEspNowPanel();
+
     // Zaplanuj restart na następną lokalną północ
     uint32_t nowTs = (uint32_t)getUnixTimestamp();
     struct tm t;
@@ -183,6 +187,7 @@ void loop() {
         updateSessionManager();
         updateRateLimiter();
         updateWiFi();
+        updateEspNowPanel();
         updateLogServer();
         updateEnergyMeter();
         updateRTCSync();

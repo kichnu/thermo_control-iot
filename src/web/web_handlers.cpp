@@ -11,6 +11,8 @@
 #include "hardware/buzzer_controller.h"
 #include "hardware/rtc_controller.h"
 #include "hardware/hw_health.h"
+#include "core/version.h"
+#include "network/espnow_panel.h"
 #include "network/wifi_manager.h"
 #include "config/config.h"
 #include "web_server.h"
@@ -70,6 +72,13 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["fram_ok"]         = !(getHwFaultActive() & HW_FAULT_FRAM);
     doc["rtc_ok"]          = !(getHwFaultActive() & HW_FAULT_RTC);
     doc["cred_ok"]         = !(getHwFaultActive() & HW_FAULT_CRED);
+    doc["fw_version"]      = FW_VERSION;
+    {   // ESP-NOW status broadcast to the touch panel
+        EspNowPanelStats es = getEspNowPanelStats();
+        doc["espnow_enabled"] = es.enabled;
+        doc["espnow_tx_ok"]   = es.txOk;
+        doc["espnow_tx_fail"] = es.txFail;
+    }
 
     String out;
     serializeJson(doc, out);
