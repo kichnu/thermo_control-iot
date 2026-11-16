@@ -37,7 +37,7 @@ void TempAlgorithm::update() {
         _state = STATE_IDLE;
         _fanActive = false;
         _resumeResetPending = false;
-        LOG_INFO("TempAlgorithm: wznowienie po Service Mode — grzalka/fan zresetowane do OFF");
+        LOG_INFO("TempAlgorithm: resumed after Service Mode — heater/fan reset to OFF");
     }
 
     if (!_checkSensor()) {
@@ -97,7 +97,7 @@ float TempAlgorithm::getAlarmHighThreshold() const {
 void TempAlgorithm::resetSensorFaultLatch() {
     _sensorFaultLatched = false;
     _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // clears the visible flag / mute if the sensor is OK now
-    LOG_WARNING("TempAlgorithm: sensor fault latch zresetowany ręcznie — jeśli usterka wciąż trwa, zatrzaśnie się ponownie na następnym cyklu");
+    LOG_WARNING("TempAlgorithm: sensor fault latch reset manually — latches again on the next cycle if the fault still lasts");
 }
 
 void TempAlgorithm::_applyDefaults() {
