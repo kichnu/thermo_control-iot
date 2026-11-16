@@ -100,6 +100,7 @@ struct StatusBody {
     int16_t  temp_x100;        // °C × 100; valid with SF_TEMP_VALID
     uint16_t alarms;           // AL_*
     uint16_t muted;            // AL_* silenced by Mute (TEMP_LOW / TEMP_HIGH only)
+    uint32_t energy_24h_wh;    // energy of the last 24 full hours [Wh], changes once an hour
 };
 
 struct CmdBody {
@@ -122,7 +123,7 @@ struct AckBody {
 #pragma pack(pop)
 
 static_assert(sizeof(FrameHdr) == 12, "FrameHdr size");
-static_assert(sizeof(StatusBody) == 70, "StatusBody size");
+static_assert(sizeof(StatusBody) == 74, "StatusBody size");
 static_assert(sizeof(FrameHdr) + sizeof(StatusBody) + TAG_LEN <= FRAME_MAX, "status frame too long");
 static_assert(sizeof(CmdBody) == 12, "CmdBody size");
 static_assert(sizeof(AckBody) == 16, "AckBody size");

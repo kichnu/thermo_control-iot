@@ -73,6 +73,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["rtc_ok"]          = !(getHwFaultActive() & HW_FAULT_RTC);
     doc["cred_ok"]         = !(getHwFaultActive() & HW_FAULT_CRED);
     doc["fw_version"]      = FW_VERSION;
+    doc["energy_24h_kwh"]  = getEnergyKwh24h();   // last 24 full hours, changes once an hour
     {   // ESP-NOW link to the touch panel
         EspNowPanelStats es = getEspNowPanelStats();
         doc["espnow_enabled"] = es.enabled;
@@ -273,6 +274,7 @@ void handleSystemToggle(AsyncWebServerRequest* request) {
 void handleEnergy(AsyncWebServerRequest* request) {
     JsonDocument doc;
     doc["total_kwh"]   = getEnergyKwhTotal();
+    doc["energy_24h_kwh"] = getEnergyKwh24h();
     doc["today_kwh"]   = getEnergyKwhToday();
     doc["pulse_count"] = getEnergyPulseCount();
     doc["power_w"]     = getPowerWatt();

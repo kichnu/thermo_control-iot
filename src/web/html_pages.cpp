@@ -70,33 +70,11 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
   .status-main-wifi.wifi-off .wifi-dot { color:var(--text-muted); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
 
-  /* Karta Energy — wzorzec wielkości z .temp (System Status), ale bez
-     obramowanego boxa (--text-secondary zamiast --accent-blue, brak
-     .status-main). Reset+timestamp we wspólnym rodzicu (.energy-reset-group),
-     żeby na mobile poprawnie wylądowały POD licznikiem (column), a na
-     desktopie po prawej (row, patrz .energy-row). */
-  .energy-row { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-  .energy-total { font-size:1.5em; color:var(--text-secondary); font-weight:300; }
-  .energy-total-value>span { font-size:2.5em; }
-  /* Heartbeat: krótki flash przy przeskoczeniu o kolejne 0.01 kWh (patrz
-     refresh() — porównanie zaokrąglonego stringa, nie samego pollingu 5s). */
-  @keyframes energy-tick { 0%{ color:var(--accent-yellow); } 100%{ color:inherit; } }
-  .energy-total-value.energy-tick>span { animation:energy-tick .8s ease; }
-
-  .energy-reset-group { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
-  .energy-reset-info { font-size:var(--font-sm); color:var(--text-secondary); text-align:right; }
-  .energy-reset-info b { color:var(--text-primary); font-family:'Courier New',monospace; }
-  @media (max-width:600px) {
-    .energy-row { flex-direction:column; align-items:stretch; }
-    /* Label i wartość+jednostka w osobnych spanach (.energy-total-label/-value)
-       specjalnie po to, żeby wymusić podział na dwie linie TYLKO na mobile —
-       na desktopie oba zostają inline w jednym wierszu (bez zmian). */
-    .energy-total-label, .energy-total-value { display:block; }
-    .energy-total-value>span { font-size:2em; }
-    .energy-reset-group { align-items:stretch; }
-    .energy-reset-group button { width:100%; }
-    .energy-reset-info { text-align:center; }
-  }
+  /* Energy of the last 24 full hours (changes once an hour): right side of .status-main, white,
+     half the size of the temperature — fixed colour, independent of the status classes */
+  .status-main-energy { display:flex; flex-direction:column; align-items:flex-end; gap:2px; flex-shrink:0; padding-right:10px; }
+  .energy-24h-label { font-size:.6rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }
+  .energy-24h { font-size:1.5em; color:var(--text-primary); white-space:nowrap; }
 
   .btn-service { background:var(--service-bg); border-color:var(--service-border); color:var(--service-text); }
   .btn-service:hover { background:var(--service-bg-hover); border-color:var(--service-border); }
@@ -264,27 +242,15 @@ static const char DASHBOARD_HTML[] PROGMEM = R"rawliteral(
         <span>Alarms: <span class="badge" id="alarms">none</span></span>
       </div>
     </div>
+    <div class="status-main-energy">
+      <span class="energy-24h-label">Last 24 h</span>
+      <span class="energy-24h"><span id="energy24h">-.--</span> kWh</span>
+    </div>
   </div>
   <!-- Latched critical hardware alarm (FRAM / RTC / credentials, hw_health) — buzzer until acknowledged -->
   <div id="hwAlarmBanner" style="display:none; margin-top:12px; color:var(--accent-red); font-weight:bold;">
     <div>⚠ HARDWARE FAULT (critical): <span id="hwAlarmText"></span></div>
     <button id="btnHwAck" class="danger" style="margin-top:8px;">Acknowledge</button>
-  </div>
-</div>
-
-<div class="card">
-  <div class="card-header">
-    <div class="card-header-icon" style="background:rgba(234,179,8,0.15);">
-      <svg fill="currentColor" style="color:var(--accent-yellow);" viewBox="0 0 24 24"><path d="M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66C8.48 10.94 10.42 7.54 13.01 3h1l-1 7h3.51c.4 0 .58.19.36.66C13.94 15.35 11 21 11 21z"/></svg>
-    </div>
-    <h2>Energy</h2>
-  </div>
-  <div class="energy-row">
-    <div class="energy-total"><span class="energy-total-label">Total Energy:</span> <span class="energy-total-value"><span id="energy_total">00.00</span> kWh</span></div>
-    <div class="energy-reset-group">
-      <button class="lockable-btn" id="btnEnergyReset">Reset Total Counter</button>
-      <div class="energy-reset-info">Last Reset: <b id="energyResetTs">never</b></div>
-    </div>
   </div>
 </div>
 
@@ -533,7 +499,6 @@ let currentFanPct = 0;
 let currentHeaterOn = false;
 let currentFanOn = false;
 let serviceModeActive = false;
-let lastEnergyKwhStr = null;
 
 async function refresh() {
   try {
@@ -618,33 +583,8 @@ async function refresh() {
 
     document.getElementById('wifiItem').className = 'status-main-wifi ' + (d.wifi_connected ? 'wifi-on' : 'wifi-off');
 
-    const e = await fetch('api/energy');
-    const en = await e.json();
-    const kwhStr = en.total_kwh.toFixed(2);
-    const totalEl = document.getElementById('energy_total');
-    // "Heartbeat": pulsujący flash TYLKO gdy zaokrąglona wartość faktycznie
-    // przeskoczyła o kolejne 0.01 kWh (nie na każdym pollu co 5s) — daje
-    // wizualne potwierdzenie zliczenia impulsów, jak mrugająca dioda licznika.
-    if (lastEnergyKwhStr !== null && kwhStr !== lastEnergyKwhStr) {
-      const valueEl = totalEl.closest('.energy-total-value');
-      valueEl.classList.remove('energy-tick');
-      void valueEl.offsetWidth; // restart animacji, gdyby poprzednia jeszcze trwała
-      valueEl.classList.add('energy-tick');
-    }
-    lastEnergyKwhStr = kwhStr;
-    totalEl.textContent = kwhStr;
-    document.getElementById('energyResetTs').textContent = formatResetTs(en.reset_ts);
+    document.getElementById('energy24h').textContent = d.energy_24h_kwh.toFixed(2);
   } catch(err) { console.error(err); }
-}
-
-// Kasowanie licznika: godzina/dzień/miesiąc/rok, świadomie bez minut/sekund.
-function formatResetTs(ts) {
-  if (!ts) return 'never';
-  const d = new Date(ts * 1000);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${hh}h · ${dd}.${mm}.${d.getFullYear()}`;
 }
 
 async function loadThermoConfig() {
@@ -899,12 +839,6 @@ document.getElementById('btnHwAck').addEventListener('click', async () => {
   const d = await r.json();
   if (d.hw_alarm) showAlert('Alarm stays', 'Still failing: ' + d.hw_alarm_text, 'warn');
   refresh();
-});
-document.getElementById('btnEnergyReset').addEventListener('click', () => {
-  showConfirm('Reset total energy counter?', 'This permanently zeroes the total kWh counter. This cannot be undone.', 'warn', async () => {
-    await fetch('api/energy-reset-total', { method: 'POST' });
-    refresh();
-  });
 });
 document.getElementById('btnLogout').addEventListener('click', async () => {
   await fetch('api/logout', { method: 'POST' });

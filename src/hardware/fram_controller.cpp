@@ -286,6 +286,42 @@ bool saveEnergyResetInfoToFRAM(const EnergyResetInfo& info) {
     return true;
 }
 
+bool saveEnergyHourSlotToFRAM(uint8_t slot, const EnergyHourSlot& s) {
+    if (!framInitialized || slot >= ENERGY_HOUR_SLOTS) return false;
+    EnergyHourSlot tmp = s;
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, offsetof(EnergyHourSlot, checksum));
+    return framWrite(FRAM_ADDR_ENERGY_HOURS + slot * sizeof(EnergyHourSlot), &tmp, sizeof(tmp));
+}
+
+bool loadEnergyHourSlotsFromFRAM(EnergyHourSlot* slots) {
+    if (!framInitialized) return false;
+    if (!fram.read(FRAM_ADDR_ENERGY_HOURS, (uint8_t*)slots, ENERGY_HOUR_SLOTS * sizeof(EnergyHourSlot))) return false;
+    for (uint8_t i = 0; i < ENERGY_HOUR_SLOTS; i++) {
+        uint16_t calc = calculateChecksum((const uint8_t*)&slots[i], offsetof(EnergyHourSlot, checksum));
+        if (calc != slots[i].checksum) slots[i] = EnergyHourSlot{0, 0, 0};
+    }
+    return true;
+}
+
+bool saveEnergyHourStartToFRAM(const EnergyHourStart& s) {
+    if (!framInitialized) return false;
+    EnergyHourStart tmp = s;
+    tmp.checksum = calculateChecksum((const uint8_t*)&tmp, offsetof(EnergyHourStart, checksum));
+    return framWrite(FRAM_ADDR_ENERGY_HOUR_START, &tmp, sizeof(tmp));
+}
+
+bool loadEnergyHourStartFromFRAM(EnergyHourStart& s) {
+    if (!framInitialized) return false;
+    EnergyHourStart tmp;
+    if (!fram.read(FRAM_ADDR_ENERGY_HOUR_START, (uint8_t*)&tmp, sizeof(tmp))) return false;
+    if (calculateChecksum((const uint8_t*)&tmp, offsetof(EnergyHourStart, checksum)) != tmp.checksum) {
+        s = EnergyHourStart{0, 0, 0, 0};
+        return false;
+    }
+    s = tmp;
+    return true;
+}
+
 bool loadEnergyResetInfoFromFRAM(EnergyResetInfo& info) {
     if (!framInitialized) return false;
 

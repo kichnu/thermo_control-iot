@@ -51,6 +51,16 @@ struct EnergyResetInfo;
 bool saveEnergyResetInfoToFRAM(const EnergyResetInfo& info);
 bool loadEnergyResetInfoFromFRAM(EnergyResetInfo& info);
 
+// Energy of the last 24 h (EnergyHourSlot × ENERGY_HOUR_SLOTS, EnergyHourStart); checksum set inside.
+// load*: a slot / start with a bad checksum comes back with hour_idx = 0 (= not valid).
+struct EnergyHourSlot;
+struct EnergyHourStart;
+
+bool saveEnergyHourSlotToFRAM(uint8_t slot, const EnergyHourSlot& s);
+bool loadEnergyHourSlotsFromFRAM(EnergyHourSlot* slots);   // ENERGY_HOUR_SLOTS entries
+bool saveEnergyHourStartToFRAM(const EnergyHourStart& s);
+bool loadEnergyHourStartFromFRAM(EnergyHourStart& s);
+
 // ===============================
 // RING BUFFERS — godzinowy/dobowy (TempAvgRecord) i zdarzeń alarmowych
 // (AlarmEvent), patrz fram_constants.h i algorithm_config.h

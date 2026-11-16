@@ -4,6 +4,11 @@ Status: **odłożone** (2026-08-17) — czeka na wymianę FRAM 8KB → 32KB.
 Powiązane: `docs/FEATURES_REGISTRY.md` D-04 (alarm przekroczenia energii dziennej, [v2])
 i E-05 (raport dzienny/tygodniowy energii, [v1] — dziś w praktyni niepełny, patrz niżej).
 
+Aktualizacja 2026-11-16: energia ostatnich 24 pełnych godzin jest już liczona (`EnergyHourSlot` × 24 + `EnergyHourStart`,
+`energy_meter.cpp`, `/api/status` `energy_24h_kwh`, status ESP-NOW `energy_24h_wh`). Zajmuje `0x1BA0–0x1C6B` z luki
+po C-09; zostaje `0x1C6C–0x1CA1` (54B — wystarczy na metadane ringu dobowego) i cały ogon `0x1CAA–0x1FFE` jak niżej.
+Ring dobowy może brać dobę jako sumę 24 slotów godzinowych zamiast `getEnergyKwhToday()` przed restartem.
+
 ## Problem
 
 Obecny licznik energii (`hardware/energy_meter.*`) daje tylko dwie liczby na żywo:

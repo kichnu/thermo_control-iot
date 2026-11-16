@@ -16,6 +16,7 @@
 #include "../core/logging.h"
 #include "../core/node_commands.h"
 #include "../core/version.h"
+#include "../hardware/energy_meter.h"
 #include "../hardware/fan_controller.h"
 #include "../hardware/heater_controller.h"
 #include "../hardware/hw_health.h"
@@ -134,6 +135,7 @@ static void buildStatus(StatusBody& b, bool withTime) {
     b.algo_state = (uint8_t)thermoAlgorithm.getState();
     b.fan_pct = getFanSpeedPct();
     b.hw_fault = getHwFaultActive();
+    b.energy_24h_wh = getEnergyWh24h();
 
     float temp = getTemperature();
     bool tempValid = isTempValid();

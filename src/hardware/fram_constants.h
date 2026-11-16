@@ -75,11 +75,17 @@
 // zastąpione przez ThermoConfig.thermal_buffer), wraca do rezerwy.
 #define FRAM_ADDR_LOCK_PIN           0x1B90  // LockPin (12B)
 
+// 0x1BA0–0x1C5F: energy of the last 24 h — ENERGY_HOUR_SLOTS(24) × EnergyHourSlot(8B) = 192B (2026-11-16)
+#define FRAM_ADDR_ENERGY_HOURS        0x1BA0
+// 0x1C60–0x1C6B: EnergyHourStart (12B) — pulse count at the start of the current hour
+#define FRAM_ADDR_ENERGY_HOUR_START   0x1C60
+// 0x1C6C–0x1CA1: free (54B) — e.g. metadata of the daily energy ring
+
 // 0x1CA2–0x1CA9: EnergyResetInfo (8B) — timestamp kasowania licznika total
 // (2026-07-18), osobno od EnergyStore (0x052E) żeby nie przesuwać layoutu
 #define FRAM_ADDR_ENERGY_RESET        0x1CA2  // EnergyResetInfo (8B)
 
-// 0x1CAA–0x1FFE: wolne (~853B rezerwa)
+// 0x1CAA–0x1FFE: free (~853B reserve) — kept for the daily energy ring (docs/ENERGY_DAILY_RING_ANALYSIS.md)
 
 // Scratch byte of the health check (hw_health): written and read back every 60 s
 #define FRAM_ADDR_HEALTH_SCRATCH      0x1FFF

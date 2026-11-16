@@ -173,6 +173,27 @@ struct EnergyResetInfo {
 };
 static_assert(sizeof(EnergyResetInfo) == 8, "EnergyResetInfo must be 8 bytes");
 
+// Energy of the last 24 full hours (2026-11-16): one slot per UTC hour, slot = hour_idx % 24, in FRAM so
+// it survives the midnight restart. A slot counts only with a valid checksum and an hour inside the
+// window — no ring metadata needed, unwritten / old slots drop out by themselves.
+constexpr uint8_t ENERGY_HOUR_SLOTS = 24;
+
+struct EnergyHourSlot {
+    uint32_t hour_idx;   // Unix UTC / 3600 of the hour
+    uint16_t wh;         // energy in that hour [Wh] (pulses converted with the ppk of that time)
+    uint16_t checksum;
+};
+static_assert(sizeof(EnergyHourSlot) == 8, "EnergyHourSlot must be 8 bytes");
+
+// Pulse count at the start of the current hour — a restart in the middle of the hour keeps its energy
+struct EnergyHourStart {
+    uint32_t hour_idx;
+    uint32_t start_pulses;
+    uint16_t _reserved;
+    uint16_t checksum;
+};
+static_assert(sizeof(EnergyHourStart) == 12, "EnergyHourStart must be 12 bytes");
+
 // C-09 (odstępstwo od temperatury zadanej, 2026-07-15 → usunięte 2026-07-24):
 // zastąpione przez thermal_buffer (patrz ThermoConfig/DEFAULT_THERMAL_BUFFER
 // wyżej) — nie kolidowały ze sobą strukturalnie, ale drugi mechanizm robiący
