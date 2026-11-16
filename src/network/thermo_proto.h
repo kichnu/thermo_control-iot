@@ -23,8 +23,34 @@ constexpr uint32_t STATUS_DEBOUNCE_MS = 300;    // change → status right away
 
 enum FrameType : uint8_t {
     FT_STATUS = 1,   // node → broadcast
-    FT_CMD    = 2,   // panel → node (stage T4)
-    FT_ACK    = 3,   // node → panel (stage T4)
+    FT_CMD    = 2,   // panel → node (unicast), CmdBody
+    FT_ACK    = 3,   // node → panel (unicast), AckBody
+};
+
+// Commands (stage T4). The panel repeats a command every CMD_RETRY_MS, at most CMD_RETRIES times, with
+// the same cmd_id; the node executes a cmd_id once and answers repeats with the stored ACK.
+// A command must echo the cmd_nonce of the last status / ACK; the node draws a new nonce after every
+// command it accepted (any result except STALE_NONCE), so a recorded frame is useless.
+// The node checks every rule itself (same gate as its web API) — the panel only greys out buttons.
+constexpr uint32_t CMD_RETRY_MS = 250;
+constexpr uint8_t  CMD_RETRIES  = 8;
+
+enum CmdCode : uint8_t {
+    CMD_SET_MODE     = 1,   // arg: 1 = Auto, 0 = Service Mode (idempotent)
+    CMD_ALARM_MUTE   = 2,   // mute TEMP_LOW / TEMP_HIGH active now (current episode)
+    CMD_SENSOR_RESET = 3,   // clear the sensor fault latch (latches again if the sensor still fails)
+    CMD_HEATER       = 4,   // arg: 1 = ON, 0 = OFF — Service Mode only
+    CMD_FAN          = 5,   // arg: 0–100 % — Service Mode only
+};
+
+enum AckResult : uint8_t {
+    ACK_OK           = 0,
+    ACK_NOT_SERVICE  = 1,   // manual heater / fan outside Service Mode
+    ACK_SENSOR_FAULT = 2,   // heater ON refused: sensor fault latched or no valid reading
+    ACK_TEMP_HIGH    = 3,   // heater ON refused: temperature above the TEMP_HIGH threshold
+    ACK_STALE_NONCE  = 4,   // cmd_nonce does not match — nothing done
+    ACK_OUT_OF_RANGE = 5,   // fan above 100 %
+    ACK_BAD_CMD      = 6,   // unknown command / argument
 };
 
 enum NodeStatus : uint8_t { NS_OK = 0, NS_WARNING, NS_ALARM, NS_FAULT, NS_SERVICE };
@@ -63,7 +89,7 @@ struct StatusBody {
     char     fw[12];
     uint32_t ip;
     uint32_t utc;              // 0 = no valid time
-    uint32_t cmd_nonce;        // commands must echo it (stage T4); changes after each executed command
+    uint32_t cmd_nonce;        // commands must echo it; changes after each accepted command
     uint8_t  node_status;      // NodeStatus
     uint8_t  auto_mode;        // 1 = Auto, 0 = Service
     uint16_t service_left_s;   // Service Mode: seconds to the auto return (0 = none)
@@ -75,10 +101,30 @@ struct StatusBody {
     uint16_t alarms;           // AL_*
     uint16_t muted;            // AL_* silenced by Mute (TEMP_LOW / TEMP_HIGH only)
 };
+
+struct CmdBody {
+    uint32_t cmd_id;           // non-zero, new for every command (repeats keep it)
+    uint32_t cmd_nonce;        // from the last status / ACK
+    uint8_t  cmd;              // CmdCode
+    uint8_t  reserved;
+    uint16_t arg;
+};
+
+struct AckBody {
+    uint32_t cmd_id;
+    uint32_t cmd_nonce;        // current nonce after this command (next command may use it at once)
+    uint8_t  cmd;              // CmdCode
+    uint8_t  result;           // AckResult
+    uint16_t value;            // SET_MODE: mode; HEATER: 1 = ON; FAN: % now
+    uint16_t alarms;           // AL_* after the command
+    uint16_t muted;            // AL_* muted after the command
+};
 #pragma pack(pop)
 
 static_assert(sizeof(FrameHdr) == 12, "FrameHdr size");
 static_assert(sizeof(StatusBody) == 70, "StatusBody size");
 static_assert(sizeof(FrameHdr) + sizeof(StatusBody) + TAG_LEN <= FRAME_MAX, "status frame too long");
+static_assert(sizeof(CmdBody) == 12, "CmdBody size");
+static_assert(sizeof(AckBody) == 16, "AckBody size");
 
 }  // namespace thermo

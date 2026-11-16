@@ -21,7 +21,8 @@ void TempAlgorithm::begin() {
 void TempAlgorithm::update() {
     if (isSystemDisabled()) {
         _resumeResetPending = true;  // wracając z pauzy trzeba zresetować hardware, patrz niżej
-        return;  // system wstrzymany — grzałka/fan pod ręcznym sterowaniem (test GUI)
+        _guardServiceMode();         // manual heater / fan — the protection still runs
+        return;
     }
 
     if (_resumeResetPending) {
@@ -41,27 +42,10 @@ void TempAlgorithm::update() {
         LOG_INFO("TempAlgorithm: wznowienie po Service Mode — grzalka/fan zresetowane do OFF");
     }
 
-    if (_sensorFaultLatched) {
-        // Latched critical fault — heater/fan frozen until a manual reset
-        // (resetSensorFaultLatch()), even if the sensor reads fine again.
-        // Requires intervention: no mute, the buzzer stops only with the reset.
-        heaterEmergencyOff();
-        fanEmergencyOff();
-        setBuzzerMode(BUZZER_ALARM);
-        return;
-    }
-
-    if (!isTempValid()) {
-        bool sensorFault = getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD;
-        _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault, getTemperature());
-        if (sensorFault) {
-            _state = STATE_SENSOR_FAULT;
-            _sensorFaultLatched = true;
-            heaterEmergencyOff();
-            fanEmergencyOff();
-            setBuzzerMode(BUZZER_ALARM);  // not mutable — reset only
-        }
-        return;  // brak ważnego odczytu — nic do zaakumulowania w buforze godzinowym
+    if (!_checkSensor()) {
+        // Auto: the fan stops too (Service Mode leaves the manual fan — cooling cannot overheat)
+        if (_sensorFaultLatched) fanEmergencyOff();
+        return;  // no valid reading — nothing for the hourly accumulator
     }
 
     float temp = getTemperature();
@@ -72,6 +56,44 @@ void TempAlgorithm::update() {
     }
     _updateHeater(temp);
     _updateFan(temp);
+}
+
+// Sensor fault detection, in every mode. Latched critical fault: heater forced OFF on every cycle
+// until a manual reset (resetSensorFaultLatch()), even if the sensor reads fine again. Requires
+// intervention: no mute, Service Mode does not silence it, the buzzer stops only with the reset.
+bool TempAlgorithm::_checkSensor() {
+    if (!_sensorFaultLatched && !isTempValid()) {
+        bool sensorFault = getSensorFaultCount() >= SENSOR_FAULT_THRESHOLD;
+        _setAlarmFlag(ALARM_FLAG_SENSOR, sensorFault, getTemperature());
+        if (sensorFault) {
+            _state = STATE_SENSOR_FAULT;
+            _sensorFaultLatched = true;
+            LOG_ERROR("TempAlgorithm: SENSOR FAULT latched — heater OFF until reset");
+        }
+    }
+    if (_sensorFaultLatched) {
+        heaterEmergencyOff();
+        setBuzzerMode(BUZZER_ALARM);
+        return false;
+    }
+    return isTempValid();
+}
+
+// Service Mode: the algorithm does not regulate, heater / fan are manual (web API / panel). Still:
+// a sensor fault latches and switches the heater off, and a manual heater goes off above the
+// TEMP_HIGH threshold (no alarm flag — the regulation and its alarms resume in Auto).
+void TempAlgorithm::_guardServiceMode() {
+    if (!_checkSensor()) return;
+    float temp = getTemperature();
+    if (isHeaterOn() && temp > getAlarmHighThreshold()) {
+        setHeaterOff();
+        LOG_WARNING("Service Mode: manual heater OFF — %.2f C above the TEMP_HIGH threshold %.2f C", temp,
+                    getAlarmHighThreshold());
+    }
+}
+
+float TempAlgorithm::getAlarmHighThreshold() const {
+    return _config.target_temp + _config.thermal_buffer + _config.alarm_delta_high;
 }
 
 void TempAlgorithm::resetSensorFaultLatch() {
@@ -198,14 +220,12 @@ bool TempAlgorithm::_checkTrendAlarm(float temp) const {
 }
 
 void TempAlgorithm::_updateAlarms(float temp) {
-    // ALARM_HIGH liczony od fan_on_point (target_temp + thermal_buffer), nie od
-    // samego target_temp (2026-07-24, user) — inaczej próg alarmu wypadałby
-    // wewnątrz normalnego zakresu buforowania dziennego i strzelałby fałszywie
-    // w trakcie zwykłej, oczekiwanej pracy fana. ALARM_LOW bez zmian (thermal
-    // buffer dotyczy tylko strony ciepłej/dziennej).
-    float fan_on_point      = _config.target_temp + _config.thermal_buffer;
+    // ALARM_HIGH counted from fan_on_point (target_temp + thermal_buffer), not from target_temp
+    // (2026-07-24, user) — otherwise the threshold would fall inside the normal daytime buffering
+    // range and fire falsely during ordinary fan work. ALARM_LOW unchanged (the thermal buffer
+    // concerns the warm / daytime side only).
     float alarm_low_thresh  = _config.target_temp - _config.alarm_delta_low;
-    float alarm_high_thresh = fan_on_point + _config.alarm_delta_high;
+    float alarm_high_thresh = getAlarmHighThreshold();
 
     bool low_now  = (temp < alarm_low_thresh);
     bool high_now = (!low_now && temp > alarm_high_thresh);

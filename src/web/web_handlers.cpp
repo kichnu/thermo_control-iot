@@ -11,6 +11,7 @@
 #include "hardware/buzzer_controller.h"
 #include "hardware/rtc_controller.h"
 #include "hardware/hw_health.h"
+#include "core/node_commands.h"
 #include "core/version.h"
 #include "network/espnow_panel.h"
 #include "network/wifi_manager.h"
@@ -73,11 +74,14 @@ void handleStatus(AsyncWebServerRequest* request) {
     doc["rtc_ok"]          = !(getHwFaultActive() & HW_FAULT_RTC);
     doc["cred_ok"]         = !(getHwFaultActive() & HW_FAULT_CRED);
     doc["fw_version"]      = FW_VERSION;
-    {   // ESP-NOW status broadcast to the touch panel
+    {   // ESP-NOW link to the touch panel
         EspNowPanelStats es = getEspNowPanelStats();
         doc["espnow_enabled"] = es.enabled;
         doc["espnow_tx_ok"]   = es.txOk;
         doc["espnow_tx_fail"] = es.txFail;
+        doc["espnow_rx_cmd"]    = es.rxCmd;
+        doc["espnow_rx_bad"]    = es.rxBad;
+        doc["espnow_rx_replay"] = es.rxReplay;
     }
 
     String out;
@@ -242,23 +246,30 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
-void handleMuteAlarm(AsyncWebServerRequest* request) {
-    thermoAlgorithm.muteActiveAlarms();
-    request->send(200, "application/json", "{\"ok\":true}");
+// Command result as HTTP: 200 {"ok":true} or 409 {"ok":false,"error":"..."} (rule of the node gate)
+static void sendCmdResult(AsyncWebServerRequest* request, thermo::AckResult r) {
+    if (r == thermo::ACK_OK) {
+        request->send(200, "application/json", "{\"ok\":true}");
+        return;
+    }
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = ackResultString(r);
+    String out;
+    serializeJson(doc, out);
+    request->send(r == thermo::ACK_OUT_OF_RANGE ? 400 : 409, "application/json", out);
 }
 
+void handleMuteAlarm(AsyncWebServerRequest* request) {
+    sendCmdResult(request, cmdAlarmMute());
+}
+
+// enabled=1 / 0: set the mode (idempotent, as the panel); without it: toggle (web GUI button)
 void handleSystemToggle(AsyncWebServerRequest* request) {
-    bool wasDisabled = isSystemDisabled();
-    setSystemState(wasDisabled);  // toggle
-    if (isSystemDisabled()) {
-        // Wejście w Service Mode — algorytm przestaje sterować buzzerem (patrz
-        // TempAlgorithm::update()), więc trzeba go wyciszyć jawnie tutaj.
-        // _alarm_flags NIE są czyszczone — status ostatniego alarmu zostaje
-        // widoczny w GUI, cichnie tylko dźwięk.
-        // Latched alarms (hardware, sensor fault) need intervention — Service Mode does not silence them
-        if (!isHwFaultAlarm() && !thermoAlgorithm.isSensorFaultLatched()) setBuzzerMode(BUZZER_OFF);
-    }
-    request->send(200, "application/json", "{\"ok\":true}");
+    bool autoMode = isSystemDisabled();
+    if (request->hasParam("enabled", true)) autoMode = request->getParam("enabled", true)->value().toInt() != 0;
+    bool changed = false;
+    sendCmdResult(request, cmdSetMode(autoMode, &changed));
 }
 
 void handleEnergy(AsyncWebServerRequest* request) {
@@ -286,34 +297,22 @@ void handleEnergyResetTotal(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
-// Test: ręczne sterowanie wentylatorem — bypass algorytmu (TempAlgorithm nadpisze
-// przy kolejnym update(), chyba że system jest wstrzymany, patrz isSystemDisabled())
+// Manual fan (Service Mode only — checked by the node gate, not only by the GUI)
 void handleTestFan(AsyncWebServerRequest* request) {
     if (!request->hasParam("pct", true)) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing pct\"}");
         return;
     }
-    int pct = request->getParam("pct", true)->value().toInt();
-    if (pct < 0 || pct > 100) {
-        request->send(400, "application/json", "{\"ok\":false,\"error\":\"pct must be 0-100\"}");
-        return;
-    }
-    setFanSpeed((uint8_t)pct);
-    LOG_INFO("Test: fan set to %d%% via GUI", pct);
-    request->send(200, "application/json", "{\"ok\":true}");
+    sendCmdResult(request, cmdFan(request->getParam("pct", true)->value().toInt()));
 }
 
-// Test: ręczne sterowanie grzałką — bypass algorytmu (TempAlgorithm nadpisze
-// przy kolejnym update(), chyba że system jest wstrzymany, patrz isSystemDisabled())
+// Manual heater (Service Mode only; ON refused with a sensor fault or above TEMP_HIGH — node gate)
 void handleTestHeater(AsyncWebServerRequest* request) {
     if (!request->hasParam("on", true)) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"missing on\"}");
         return;
     }
-    bool on = request->getParam("on", true)->value().toInt() != 0;
-    on ? setHeaterOn() : setHeaterOff();
-    LOG_INFO("Test: heater set to %s via GUI", on ? "ON" : "OFF");
-    request->send(200, "application/json", "{\"ok\":true}");
+    sendCmdResult(request, cmdHeater(request->getParam("on", true)->value().toInt() != 0));
 }
 
 // Test: wypełnia bufory hourly/daily/alarm losowymi danymi do wglądu przy pracy
@@ -379,8 +378,7 @@ void handleHwAlarmAck(AsyncWebServerRequest* request) {
 }
 
 void handleResetSensorFault(AsyncWebServerRequest* request) {
-    thermoAlgorithm.resetSensorFaultLatch();
-    request->send(200, "application/json", "{\"ok\":true}");
+    sendCmdResult(request, cmdSensorReset());
 }
 
 // Lock-PIN edycji GUI — osobny od hasła logowania (drugi zamek NA edycję,

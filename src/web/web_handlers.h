@@ -18,7 +18,8 @@
 //   POST /api/thermo-config
 //   POST /api/mute-alarm
 //   POST /api/reset-sensor-fault
-//   POST /api/system-toggle
+//   POST /api/system-toggle       (enabled=0|1 sets the mode, without it toggles)
+//   POST /api/test/heater (on), /api/test/fan (pct) — Service Mode only, rules in core/node_commands
 //   GET  /api/energy
 //   POST /api/energy-reset-day
 //   POST /api/energy-reset-total  (kasowanie licznika total — gating PIN po stronie GUI, .lockable-btn)

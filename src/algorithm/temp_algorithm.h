@@ -40,6 +40,9 @@ public:
     bool           isSensorFaultLatched() const { return _sensorFaultLatched; }
     void           resetSensorFaultLatch();
 
+    // TEMP_HIGH threshold: fan_on_point (target + thermal_buffer) + alarm_delta_high
+    float          getAlarmHighThreshold() const;
+
     // Konfiguracja (ładowana z FRAM lub defaults)
     bool           loadConfig();
     bool           saveConfig();
@@ -75,6 +78,8 @@ private:
     void _updateHeater(float temp);
     void _updateFan(float temp);
     void _updateAlarms(float temp);
+    bool _checkSensor();         // false: no valid reading or fault latched (heater forced OFF)
+    void _guardServiceMode();    // Service Mode: sensor fault and TEMP_HIGH protection of the manual heater
     bool _checkTrendAlarm(float temp) const;
     void _accumulateHourlySample(float temp);
     void _flushHourlyAccumulator(uint32_t hourStartTs);
