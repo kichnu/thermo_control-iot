@@ -26,5 +26,8 @@ Punkt naprawiony → oznaczyć tu i w tabeli w dev-knowledge. Audyt 2026-10-29; 
   powrocie (maks. 3 na zatrzask). RTC: ponowna próba w trakcie pracy, ustawienie z NTP w tle.
 - Poprawka przy okazji: przy utracie zasilania DS3231 nie zapisujemy już czasu kompilacji (kasował flagę OSF, więc
   kolejny start brał zły czas za poprawny) — czas ESP do ustawienia DS3231 z NTP.
+- Bateria DS3231 (2026-11-16): reset zasilania z wyczerpaną CR2032 → flaga OSF → alarm RTC przy starcie (przed NTP),
+  po ustawieniu z NTP „works now”. Tekst alarmu podaje wtedy przyczynę: „DS3231 lost power … replace CR2032 battery”
+  (do następnego startu ze sprawną baterią). Sprawdzone na sprzęcie: zatrzask przy starcie i powrót po NTP.
 - Do zrobienia: test na sprzęcie (odłączenie FRAM / RTC w trakcie pracy, start bez nich, potwierdzenie), dashboard
   VPS — pokazywanie pola `alarm`.

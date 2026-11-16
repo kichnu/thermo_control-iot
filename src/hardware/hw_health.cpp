@@ -82,7 +82,8 @@ static void runCheck() {
 
     for (uint8_t bit : ALL_BITS) {
         if ((active & bit) && !(g_active & bit)) {
-            LOG_ERROR("CRITICAL: %s fault — alarm latched", bitName(bit));
+            LOG_ERROR("CRITICAL: %s fault — alarm latched%s", bitName(bit),
+                      bit == HW_FAULT_RTC && isBatteryIssueDetected() ? " (DS3231 lost power — replace CR2032 battery)" : "");
         } else if (!(active & bit) && (g_active & bit)) {
             LOG_WARNING("%s works again — acknowledge in the GUI clears the alarm", bitName(bit));
         }
@@ -136,7 +137,11 @@ String getHwFaultText() {
         if (!(g_latch.mask & bit)) continue;
         if (s.length()) s += " · ";
         s += bitName(bit);
-        if (!(g_active & bit))          s += " failed earlier, works now";
+        // DS3231 kept no time over a power cut (OSF): the module works, the backup battery does not
+        bool battery = bit == HW_FAULT_RTC && isBatteryIssueDetected();
+        if (battery && !(g_active & bit)) s += " DS3231 lost power earlier, works now — replace CR2032 battery";
+        else if (battery)               s += " DS3231 lost power, waiting for NTP — replace CR2032 battery";
+        else if (!(g_active & bit))     s += " failed earlier, works now";
         else if (bit == HW_FAULT_FRAM)  s += " not responding or read/write check failed";
         else if (bit == HW_FAULT_RTC)   s += " DS3231 not responding or no valid time";
         else                            s += " not in FRAM — build-time fallback in use";
