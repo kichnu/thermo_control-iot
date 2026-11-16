@@ -4,20 +4,19 @@
 #include <Arduino.h>
 #include "algorithm_config.h"
 
-// Automat sterowania temperaturą:
-//  - histereza symetryczna (jeden parametr/kanał, OFF przy target_temp) dla SSR grzałki i PWM wentylatora
+// Temperature control state machine:
+//  - symmetric hysteresis (one parameter per channel, OFF at target_temp) for the heater SSR and the fan PWM
 //  - trend warning (no buzzer): heater ON for >= trend_window_min minutes without enough temperature rise
-//  - SENSOR_FAULT to awaria KRYTYCZNA — latch, grzałka/fan zamrożone do ręcznego resetu
-//    (resetSensorFaultLatch()), nawet gdy czujnik sam wróci do zdrowia
-//  - logowanie: bufor godzinowy (RAM-owy accumulator → FRAM co godzinę),
-//    bufor dobowy (średnia z 24 godzinowych), log faktów wystąpienia alarmu
-//    (bez start/end) — patrz TempAvgRecord/AlarmEvent w algorithm_config.h
+//  - SENSOR_FAULT is a CRITICAL fault — latched, heater/fan frozen until a manual reset
+//    (resetSensorFaultLatch()), even if the sensor recovers by itself
+//  - logging: hourly buffer (RAM accumulator → FRAM every hour), daily buffer (average of 24 hourly),
+//    log of alarm occurrences (no start/end) — see TempAvgRecord/AlarmEvent in algorithm_config.h
 
 class TempAlgorithm {
 public:
     void begin();
-    void update();                          // wywołuj co TEMP_MEASURE_INTERVAL_S (sensor+sterowanie+akumulacja)
-    void checkLogRollover();                // wywołuj co pętlę/~100ms — detekcja granicy godziny/doby (patrz .cpp)
+    void update();                          // call every TEMP_MEASURE_INTERVAL_S (sensor + control + accumulation)
+    void checkLogRollover();                // call every loop / ~100 ms — hour / day boundary detection (see .cpp)
 
     AlgorithmState getState() const         { return _state; }
     const char*    getStateString() const;
@@ -31,19 +30,17 @@ public:
     // TREND is a warning without a buzzer.
     void           muteActiveAlarms();
 
-    // SENSOR_FAULT jako awaria krytyczna (2026-07-14, user): raz zatrzaśnięta,
-    // grzałka/fan zostają wymuszone OFF w KAŻDYM update() dopóki ktoś ręcznie
-    // nie potwierdzi — sam powrót czujnika do zdrowia NIE wystarcza (to
-    // świadomie inne zachowanie niż ALARM_LOW/HIGH/TREND, które same wracają
-    // do normy). Jeśli usterka wciąż trwa, kolejny update() i tak natychmiast
-    // zatrzaśnie ponownie.
+    // SENSOR_FAULT as a critical fault (2026-07-14, user): once latched, the heater (and the fan in
+    // Auto) is forced OFF in EVERY update() until someone resets it manually — the sensor recovering
+    // by itself is NOT enough (deliberately unlike ALARM_LOW/HIGH/TREND, which clear by themselves).
+    // If the fault still lasts, the next update() latches it again at once.
     bool           isSensorFaultLatched() const { return _sensorFaultLatched; }
     void           resetSensorFaultLatch();
 
     // TEMP_HIGH threshold: fan_on_point (target + thermal_buffer) + alarm_delta_high
     float          getAlarmHighThreshold() const;
 
-    // Konfiguracja (ładowana z FRAM lub defaults)
+    // Configuration (loaded from FRAM or defaults)
     bool           loadConfig();
     bool           saveConfig();
     const ThermoConfig& getConfig() const  { return _config; }
@@ -51,26 +48,24 @@ public:
 
 private:
     AlgorithmState   _state       = STATE_IDLE;
-    uint8_t          _alarm_flags = 0;   // aktywne TERAZ (live, nie latchowane)
-    uint8_t          _muted_flags = 0;   // wyciszone przez muteActiveAlarms(), per-epizod
+    uint8_t          _alarm_flags = 0;   // active NOW (live, not latched)
+    uint8_t          _muted_flags = 0;   // silenced by muteActiveAlarms(), per episode
     ThermoConfig       _config    = {};
-    bool             _fanActive   = false;  // latch: ON przy temp>fan_on_point, OFF przy temp<=fan_off_point (patrz _updateFan)
+    bool             _fanActive   = false;  // latch: ON at temp > fan_on_point, OFF at temp <= fan_off_point (see _updateFan)
     bool             _sensorFaultLatched = false;
-    // Ustawiane w update() przy każdym cyklu, gdy system jest wstrzymany (Service
-    // Mode) — sygnalizuje, że przy najbliższym wznowieniu trzeba zresetować
-    // grzałkę/fan do znanego stanu (patrz update() w .cpp, dlaczego).
+    // Set in update() on every cycle while the system is paused (Service Mode) — on the next resume
+    // the heater / fan must be reset to a known state (see update() in .cpp for why).
     bool             _resumeResetPending = false;
 
-    // Akumulator godzinowy — TYLKO RAM, flushowany do FRAM przy zmianie godziny.
+    // Hourly accumulator — RAM ONLY, flushed to FRAM when the hour changes.
     float            _hourAccumSum   = 0.0f;
     uint16_t         _hourAccumCount = 0;
-    // (rok*366 + dzień_roku)*24 + godzina, dla ostatnio widzianej godziny lokalnej.
-    // -1 = jeszcze nie zainicjalizowany (pierwszy tick po boot, nic nie flushuj).
+    // (year*366 + day_of_year)*24 + hour of the last seen local hour.
+    // -1 = not initialised yet (first tick after boot, flush nothing).
     int32_t          _lastHourKey    = -1;
 
-    // Punkt odniesienia dla trendu: początek BIEŻĄCEGO ciągłego grzania
-    // (resetowany na każdym zboczu OFF→ON w _updateHeater). 0 = brak punktu
-    // odniesienia (grzałka aktualnie nie grzeje od dłuższego czasu).
+    // Trend reference point: start of the CURRENT continuous heating (reset on every OFF→ON edge
+    // in _updateHeater). 0 = no reference (the heater is not heating at the moment).
     uint32_t         _heatStartTs   = 0;
     float             _heatStartTemp = 0.0f;
 
@@ -85,10 +80,9 @@ private:
     void _flushHourlyAccumulator(uint32_t hourStartTs);
     void _rollupDailyAverage();
     void _logAlarmEvent(uint8_t flag, float temp);
-    // Ustawia/czyści bit w _alarm_flags; przy zboczu 0→1 loguje AlarmEvent
-    // (fakt wystąpienia, bez end/duration), a przy 1→0 kasuje odpowiadający
-    // bit w _muted_flags, żeby kolejne wystąpienie tego samego typu alarmu
-    // znów zadźwięczyło (mute nie jest permanentny per-typ, tylko per-epizod).
+    // Sets / clears a bit in _alarm_flags; on a 0→1 edge logs an AlarmEvent (the occurrence, no
+    // end/duration), on 1→0 clears the matching bit in _muted_flags, so the next occurrence of the
+    // same alarm sounds again (the mute is per episode, not permanent per type).
     void _setAlarmFlag(uint8_t flag, bool active, float temp);
 };
 

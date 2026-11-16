@@ -13,27 +13,25 @@
 TempAlgorithm thermoAlgorithm;
 
 void TempAlgorithm::begin() {
-    loadConfig();        // stosuje defaults wewnętrznie, jeśli FRAM pusty/niepoprawny
+    loadConfig();        // applies the defaults itself when FRAM is empty / invalid
     LOG_INFO("TempAlgorithm: init, target=%.1f heat_hyst=%.1f",
              _config.target_temp, _config.heat_hyst);
 }
 
 void TempAlgorithm::update() {
     if (isSystemDisabled()) {
-        _resumeResetPending = true;  // wracając z pauzy trzeba zresetować hardware, patrz niżej
+        _resumeResetPending = true;  // on resume the hardware must be reset, see below
         _guardServiceMode();         // manual heater / fan — the protection still runs
         return;
     }
 
     if (_resumeResetPending) {
-        // Wyjście z Service Mode (ręczne /api/system-toggle lub 15-min auto-enable,
-        // config.cpp::checkSystemAutoEnable()) — w czasie pauzy grzałka/fan mogły
-        // zostać ręcznie nadpisane przez /api/test/heater|fan, BEZ synchronizacji
-        // _state/_fanActive. Bez tego resetu _updateHeater()'s gałąź OFF (warunek
-        // `_state == STATE_HEATING`) mogła nigdy się nie uruchomić — grzałka
-        // ręcznie zostawiona ON zostawała ON, bo algorytm "myślał", że już jest
-        // IDLE i nie miał powodu wysłać setHeaterOff(). Reset do IDLE/OFF daje
-        // znany punkt startowy, od którego histereza znów liczy poprawnie.
+        // Leaving Service Mode (manual /api/system-toggle, panel, or the 15-min auto-enable,
+        // config.cpp::checkSystemAutoEnable()) — during the pause the heater / fan may have been
+        // set manually WITHOUT syncing _state/_fanActive. Without this reset the OFF branch of
+        // _updateHeater() (condition `_state == STATE_HEATING`) might never run — a heater left ON
+        // manually stayed ON, because the algorithm "thought" it was IDLE and had no reason to call
+        // setHeaterOff(). Reset to IDLE/OFF gives a known starting point for the hysteresis.
         heaterEmergencyOff();
         fanEmergencyOff();
         _state = STATE_IDLE;
@@ -52,7 +50,7 @@ void TempAlgorithm::update() {
     _accumulateHourlySample(temp);
     _updateAlarms(temp);
     if (_state == STATE_ALARM_LOW || _state == STATE_ALARM_HIGH) {
-        return;  // _updateAlarms() już ustawił grzałkę/fan (alarm ma priorytet nad normalną regulacją)
+        return;  // _updateAlarms() already set heater / fan (an alarm takes priority over regulation)
     }
     _updateHeater(temp);
     _updateFan(temp);
@@ -98,7 +96,7 @@ float TempAlgorithm::getAlarmHighThreshold() const {
 
 void TempAlgorithm::resetSensorFaultLatch() {
     _sensorFaultLatched = false;
-    _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // czyści widoczną flagę/mute, jeśli czujnik już OK
+    _setAlarmFlag(ALARM_FLAG_SENSOR, false, getTemperature());  // clears the visible flag / mute if the sensor is OK now
     LOG_WARNING("TempAlgorithm: sensor fault latch zresetowany ręcznie — jeśli usterka wciąż trwa, zatrzaśnie się ponownie na następnym cyklu");
 }
 
@@ -119,10 +117,9 @@ void TempAlgorithm::_applyDefaults() {
     _config.fan_min_pct      = DEFAULT_FAN_MIN_PCT;
 }
 
-// Histereza symetryczna wokół target_temp, jeden parametr na kanał (patrz pamięć
-// projektu): ON przy target - heat_hyst, OFF dokładnie przy target_temp (>=).
-// Zbocze OFF→ON to też punkt odniesienia dla _checkTrendAlarm() — początek
-// BIEŻĄCEGO ciągłego grzania (nie resetowany, dopóki grzałka pracuje bez przerwy).
+// Symmetric hysteresis around target_temp, one parameter per channel: ON at target - heat_hyst,
+// OFF exactly at target_temp (>=). The OFF→ON edge is also the reference point for
+// _checkTrendAlarm() — start of the CURRENT continuous heating (kept while the heater runs).
 void TempAlgorithm::_updateHeater(float temp) {
     float on_thresh = _config.target_temp - _config.heat_hyst;
     if (temp < on_thresh) {
@@ -135,21 +132,18 @@ void TempAlgorithm::_updateHeater(float temp) {
     } else if (temp >= _config.target_temp && _state == STATE_HEATING) {
         setHeaterOff();
         _state = STATE_IDLE;
-        _heatStartTs = 0;  // ciągłe grzanie zakończone sukcesem — brak punktu odniesienia
+        _heatStartTs = 0;  // continuous heating finished — no reference point
     }
 }
 
-// Bufor termiczny dzień/noc (2026-07-24, user, patrz DEFAULT_THERMAL_BUFFER):
-// punkt ON przesunięty z target_temp na fan_on_point = target_temp +
-// thermal_buffer — pozwala tankować nadmiar ciepła w dzień zamiast go od razu
-// zbijać. cool_start dalej pełni rolę histerezy, ale liczonej OD fan_on_point
-// (OFF przy fan_on_point - cool_start), nie od target_temp — inaczej OFF
-// wypadałby poniżej target_temp i fan biłby się z grzałką w jej zakresie
-// pracy (patrz walidacja thermal_buffer >= cool_start w web_handlers.cpp).
-// Fan nie jest on/off — potrzebuje własnego latcha (_fanActive), bo prędkość
-// między progami zależy od tego, czy fan już pracuje (inaczej calcFanSpeed()
-// nie wiedziałby, czy poniżej fan_on_point ma zwrócić 0, czy trzymać floor
-// fan_min_pct).
+// Day/night thermal buffer (2026-07-24, user, see DEFAULT_THERMAL_BUFFER): the ON point moved from
+// target_temp to fan_on_point = target_temp + thermal_buffer — stores surplus heat during the day
+// instead of removing it at once. cool_start is still the hysteresis, but counted FROM fan_on_point
+// (OFF at fan_on_point - cool_start), not from target_temp — otherwise OFF would fall below
+// target_temp and the fan would fight the heater in its range (see the thermal_buffer >= cool_start
+// validation in web_handlers.cpp). The fan is not on/off — it needs its own latch (_fanActive),
+// because the speed between the thresholds depends on whether the fan already runs (otherwise
+// calcFanSpeed() would not know whether to return 0 below fan_on_point or keep the fan_min_pct floor).
 void TempAlgorithm::_updateFan(float temp) {
     float fan_on_point  = _config.target_temp + _config.thermal_buffer;
     float fan_off_point = fan_on_point - _config.cool_start;
@@ -168,7 +162,7 @@ void TempAlgorithm::_updateFan(float temp) {
     else if (!_fanActive && _state == STATE_COOLING) _state = STATE_IDLE;
 }
 
-// AlarmEventType odpowiadający fladze — patrz algorithm_config.h.
+// AlarmEventType of a flag — see algorithm_config.h.
 static AlarmEventType alarmEventTypeFor(uint8_t flag) {
     switch (flag) {
         case ALARM_FLAG_TEMP_LOW:  return ALARM_EVT_LOW;
@@ -178,8 +172,8 @@ static AlarmEventType alarmEventTypeFor(uint8_t flag) {
     }
 }
 
-// Loguje sam FAKT wystąpienia (2026-07-14, user: bez end/duration — wystarczy
-// wiedzieć, że alarm był, żeby wyłowić go z długookresowego wykresu temp).
+// Logs only the OCCURRENCE (2026-07-14, user: no end/duration — knowing the alarm happened is
+// enough to spot it on the long-term temperature chart).
 void TempAlgorithm::_logAlarmEvent(uint8_t flag, float temp) {
     AlarmEvent ev;
     ev.timestamp = (uint32_t)getUnixTimestamp();
@@ -196,24 +190,22 @@ void TempAlgorithm::_setAlarmFlag(uint8_t flag, bool active, float temp) {
         _logAlarmEvent(flag, temp);
     } else if (!active && wasActive) {
         _alarm_flags &= ~flag;
-        _muted_flags &= ~flag;  // warunek ustąpił — kolejne wystąpienie znów zadźwięczy
+        _muted_flags &= ~flag;  // condition cleared — the next occurrence sounds again
     }
 }
 
-// Grzałka pracuje ciągle od >= trend_window_min minut, ale temperatura nie
-// wzrosła o trend_alarm_delta względem punktu startu tego ciągłego grzania
-// (_heatStartTs/_heatStartTemp, ustawiane w _updateHeater() na zboczu OFF→ON).
-// Zamiast okna 5 min ze stałym progiem spadku (stare podejście, zbyt czułe/
-// nieadekwatne do bezwładności 240L) — user, 2026-07-14, do przetestowania
-// w terenie zanim domkniemy domyślne wartości.
+// The heater has run continuously for >= trend_window_min minutes, but the temperature has not risen
+// by trend_alarm_delta from the start of this continuous heating (_heatStartTs/_heatStartTemp, set in
+// _updateHeater() on the OFF→ON edge). Replaces a 5-min window with a fixed drop threshold (too
+// sensitive for the inertia of 240 L) — user, 2026-07-14, defaults to be confirmed in the field.
 bool TempAlgorithm::_checkTrendAlarm(float temp) const {
     if (!isHeaterOn() || _state != STATE_HEATING) return false;
-    if (_heatStartTs == 0) return false;  // brak punktu odniesienia (dopiero co ruszyło grzanie)
+    if (_heatStartTs == 0) return false;  // no reference point (heating just started)
 
     uint32_t now = (uint32_t)getUnixTimestamp();
-    if (now < _heatStartTs) return false;  // zegar się cofnął (resync RTC) — nie ufaj
+    if (now < _heatStartTs) return false;  // clock went back (RTC resync) — do not trust it
     uint32_t elapsed_s = now - _heatStartTs;
-    if (elapsed_s < (uint32_t)_config.trend_window_min * 60UL) return false;  // okno jeszcze się nie domknęło
+    if (elapsed_s < (uint32_t)_config.trend_window_min * 60UL) return false;  // window not closed yet
 
     float rise = temp - _heatStartTemp;
     return rise < _config.trend_alarm_delta;
@@ -270,12 +262,10 @@ void TempAlgorithm::_accumulateHourlySample(float temp) {
     _hourAccumCount += 1;
 }
 
-// Zapisuje uśrednioną próbkę bieżącej godziny do FRAM — wołane przy wykryciu
-// przejścia granicy godziny, NIEZALEŻNIE od tego czy godzina była pełna
-// (restart o lokalnej północy — patrz main.cpp — gwarantuje ≥1 niepełną
-// godzinę dziennie; pomijanie takich godzin oznaczałoby, że bufor dobowy
-// nigdy nie osiągnąłby kompletu 24 wpisów). Jedyny guard: zero próbek
-// (np. czujnik w fault przez całą godzinę) — wtedy nic nie zapisujemy.
+// Saves the averaged sample of the current hour to FRAM — called when an hour boundary is crossed,
+// REGARDLESS of whether the hour was complete (the restart at local midnight — see main.cpp — gives
+// >= 1 partial hour a day; skipping such hours would keep the daily buffer from ever getting all 24
+// entries). The only guard: zero samples (e.g. sensor fault for the whole hour) — nothing saved.
 void TempAlgorithm::_flushHourlyAccumulator(uint32_t hourStartTs) {
     if (_hourAccumCount > 0) {
         TempAvgRecord rec;
@@ -287,10 +277,9 @@ void TempAlgorithm::_flushHourlyAccumulator(uint32_t hourStartTs) {
     _hourAccumCount = 0;
 }
 
-// Średnia z 24 rekordów godzinowych = doba, która właśnie się zakończyła
-// (bufor godzinowy to zawsze "ostatnie 24h" — patrz HOURLY_BUFFER_CAPACITY=24).
-// Jeśli ring jeszcze nie ma 24 wpisów (pierwsza doba po uruchomieniu), pomijamy
-// zapis zamiast liczyć średnią z niepełnego zestawu.
+// Average of 24 hourly records = the day that has just ended (the hourly buffer is always "the last
+// 24 h" — see HOURLY_BUFFER_CAPACITY=24). While the ring has fewer than 24 entries (first day after
+// start-up) nothing is saved instead of averaging an incomplete set.
 void TempAlgorithm::_rollupDailyAverage() {
     TempAvgRecord hourly[HOURLY_BUFFER_CAPACITY];
     uint16_t n = loadHourlyHistory(hourly, HOURLY_BUFFER_CAPACITY);  // newest-first
@@ -300,25 +289,24 @@ void TempAlgorithm::_rollupDailyAverage() {
     for (uint16_t i = 0; i < n; i++) sum10 += hourly[i].temp_x10;
 
     TempAvgRecord day;
-    day.timestamp = hourly[n - 1].timestamp;  // najstarszy z 24 = początek zakończonej doby
+    day.timestamp = hourly[n - 1].timestamp;  // oldest of the 24 = start of the finished day
     day.temp_x10  = (int16_t)lroundf((float)sum10 / n);
     saveDailyRecord(day);
 }
 
-// Wołane co pętlę (~100ms z main.cpp), NIEZALEŻNIE od 15s cyklu update()/sensora:
-// granica lokalnej północy pokrywa się z restartem urządzenia (main.cpp planuje
-// go dokładnie na najbliższą lokalną północ), który jest sprawdzany co pętlę —
-// gdyby detekcja granicy godziny była związana z 15s cyklem update(), restart
-// mógłby wygrać wyścig i zabić proces przed flushem/rollupem ostatniej godziny doby.
+// Called every loop (~100 ms from main.cpp), INDEPENDENT of the 15 s update() / sensor cycle: the
+// local midnight boundary coincides with the device restart (main.cpp schedules it exactly at the
+// next local midnight), checked every loop — if the hour boundary detection were tied to the 15 s
+// update() cycle, the restart could win the race and kill the flush / rollup of the day's last hour.
 void TempAlgorithm::checkLogRollover() {
     time_t ts = (time_t)getUnixTimestamp();
     struct tm t;
     localtime_r(&ts, &t);
-    if (t.tm_year <= 120) return;  // RTC/NTP jeszcze nie zsynchronizowany (rok < 2020)
+    if (t.tm_year <= 120) return;  // RTC / NTP not synced yet (year < 2020)
 
     int32_t hourKey = ((int32_t)t.tm_year * 366 + t.tm_yday) * 24 + t.tm_hour;
     if (_lastHourKey < 0) {
-        _lastHourKey = hourKey;  // pierwszy tick po boot — nie flushuj nieistniejącego okresu
+        _lastHourKey = hourKey;  // first tick after boot — do not flush a period that never existed
         return;
     }
     if (hourKey == _lastHourKey) return;

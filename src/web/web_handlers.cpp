@@ -21,7 +21,7 @@
 #include "html_pages.h"
 #include <ArduinoJson.h>
 
-// TODO: Etap 5a — pełna implementacja
+// TODO: stage 5a — full implementation
 
 void registerThermoHandlers(AsyncWebServer& server) {
     server.on("/api/status",           HTTP_GET,  requireAuth(handleStatus));
@@ -48,9 +48,8 @@ void handleStatus(AsyncWebServerRequest* request) {
     float temp = getTemperature();
     const ThermoConfig& cfg = thermoAlgorithm.getConfig();
     float fan_on_point = cfg.target_temp + cfg.thermal_buffer;
-    // "Cicha uwaga" w GUI (patrz CLAUDE.md, thermal_buffer): temp już powyżej
-    // target_temp, ale jeszcze poniżej progu włączenia fana — system czeka,
-    // nic nie robi.
+    // "Quiet note" in the GUI (see CLAUDE.md, thermal_buffer): temperature already above
+    // target_temp but still below the fan ON point — the system waits, does nothing.
     bool in_buffer_zone = !isHeaterOn() && getFanSpeedPct() == 0 &&
                            temp >= cfg.target_temp && temp < fan_on_point;
 
@@ -89,8 +88,8 @@ void handleStatus(AsyncWebServerRequest* request) {
     request->send(200, "application/json", out);
 }
 
-// Bufory godzinowy/dobowy — patrz TempAvgRecord (algorithm_config.h). Obie
-// pojemności (24 / 366) są już z natury małe, więc serwujemy komplet naraz.
+// Hourly / daily buffers — see TempAvgRecord (algorithm_config.h). Both capacities (24 / 366) are
+// small, so the whole set is served at once.
 
 void handleHourlyHistory(AsyncWebServerRequest* request) {
     TempAvgRecord buf[HOURLY_BUFFER_CAPACITY];
@@ -125,8 +124,8 @@ void handleDailyHistory(AsyncWebServerRequest* request) {
 }
 
 void handleAlarmEvents(AsyncWebServerRequest* request) {
-    // Limit odpowiedzi HTTP — bufor ma miejsce na ALARM_BUFFER_CAPACITY (300)
-    // epizodów, ale nie serwujemy wszystkich naraz.
+    // HTTP answer limit — the buffer holds ALARM_BUFFER_CAPACITY (300) episodes, but not all of
+    // them are served at once.
     const uint16_t MAX_RETURNED = 100;
     AlarmEvent buf[MAX_RETURNED];
     uint16_t n = loadAlarmEvents(buf, MAX_RETURNED);  // newest-first
@@ -197,11 +196,10 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
         cfg.fan_min_pct = (uint8_t)v;
     }
 
-    // Walidacja: progi muszą zachowywać sensowną kolejność fizyczną.
-    // cool_full i cool_start liczą się teraz w PRZECIWNE strony od fan_on_point
-    // (cool_start w dół do fan_off_point, cool_full w górę do 100%, patrz
-    // _updateFan()) — nie ma już bezpośredniej relacji cool_full > cool_start,
-    // stąd tylko osobny dolny próg na cool_full poniżej.
+    // Validation: the thresholds must keep a sensible physical order. cool_full and cool_start
+    // count in OPPOSITE directions from fan_on_point (cool_start down to fan_off_point, cool_full
+    // up to 100 %, see _updateFan()) — there is no direct cool_full > cool_start relation any
+    // more, hence only a separate lower bound on cool_full below.
     if (cfg.cool_full <= 0.0f) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"cool_full must be > 0\"}");
         return;
@@ -210,9 +208,9 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"alarm_delta_low must exceed heat_hyst\"}");
         return;
     }
-    // heat_hyst/cool_start to teraz jedyny parametr histerezy na kanał (ON-offset,
-    // OFF zawsze przy target_temp) — poniżej MIN_HYSTERESIS_OFFSET próg ON/OFF
-    // tonie w szumie STS35 (±0.1°C) i grozi chatteringiem.
+    // heat_hyst / cool_start are the only hysteresis parameter per channel (ON offset, OFF always
+    // at target_temp) — below MIN_HYSTERESIS_OFFSET the ON/OFF threshold drowns in the STS35 noise
+    // (±0.1 °C) and risks chattering.
     if (cfg.heat_hyst < MIN_HYSTERESIS_OFFSET || cfg.cool_start < MIN_HYSTERESIS_OFFSET) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"heat_hyst/cool_start must be >= 0.1\"}");
         return;
@@ -221,16 +219,16 @@ void handleSetThermoConfig(AsyncWebServerRequest* request) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"trend_window_min must be >= 5, trend_alarm_delta must be > 0\"}");
         return;
     }
-    // thermal_buffer >= cool_start: inaczej fan_off_point (= fan_on_point -
-    // cool_start, patrz _updateFan()) spadłby poniżej target_temp i fan
-    // biłby się z grzałką w jej normalnym zakresie pracy.
+    // thermal_buffer >= cool_start: otherwise fan_off_point (= fan_on_point - cool_start, see
+    // _updateFan()) would fall below target_temp and the fan would fight the heater in its
+    // normal range.
     if (cfg.thermal_buffer < cfg.cool_start) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"thermal_buffer must be >= cool_start\"}");
         return;
     }
-    // cool_full < alarm_delta_high: oba liczone od tego samego fan_on_point
-    // (patrz _updateFan()/_updateAlarms()) — bez tego ALARM_HIGH mógłby
-    // zadziałać zanim fan w ogóle dojdzie do 100%, przerywając łagodny ramp.
+    // cool_full < alarm_delta_high: both counted from the same fan_on_point (see
+    // _updateFan() / _updateAlarms()) — otherwise ALARM_HIGH could fire before the fan reaches
+    // 100 %, cutting the smooth ramp short.
     if (cfg.cool_full >= cfg.alarm_delta_high) {
         request->send(400, "application/json", "{\"ok\":false,\"error\":\"cool_full must be < alarm_delta_high\"}");
         return;
@@ -289,9 +287,8 @@ void handleEnergyResetDay(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
-// Kasowanie licznika total — nieodwracalne, dlatego przycisk w GUI ma klasę
-// .lockable-btn (wymaga wcześniejszego odblokowania PIN-em, ten sam mechanizm
-// co Save w Algorithm Settings, patrz gui_design_system_thermo).
+// Total counter reset — irreversible, so the GUI button has the .lockable-btn class (needs the PIN
+// unlock first, the same mechanism as Save in Algorithm Settings, see gui_design_system_thermo).
 void handleEnergyResetTotal(AsyncWebServerRequest* request) {
     energyResetTotalCounter();
     request->send(200, "application/json", "{\"ok\":true}");
@@ -315,10 +312,10 @@ void handleTestHeater(AsyncWebServerRequest* request) {
     sendCmdResult(request, cmdHeater(request->getParam("on", true)->value().toInt() != 0));
 }
 
-// Test: wypełnia bufory hourly/daily/alarm losowymi danymi do wglądu przy pracy
-// nad GUI (wykresy, tabele) — zanim urządzenie zbierze prawdziwą historię.
-// Zostawione w production build celowo (user, 2026-07): kod trywialny, endpoint
-// wymaga auth jak reszta /api/test/*, więc nieszkodliwy poza ręcznym wywołaniem.
+// Test: fills the hourly / daily / alarm buffers with random data for GUI work (charts, tables)
+// before the device collects a real history. Kept in the production build on purpose (user,
+// 2026-07): trivial code, the endpoint needs auth like the rest of /api/test/*, harmless unless
+// called by hand.
 void handleTestSeedHistory(AsyncWebServerRequest* request) {
     float target = thermoAlgorithm.getConfig().target_temp;
     uint32_t now = (uint32_t)getUnixTimestamp();
@@ -337,8 +334,8 @@ void handleTestSeedHistory(AsyncWebServerRequest* request) {
         saveDailyRecord(rec);
     }
 
-    // 15 losowych faktów wystąpienia alarmu (bez start/end, patrz AlarmEvent),
-    // rozrzuconych w ostatnich 90 dniach.
+    // 15 random alarm occurrences (no start/end, see AlarmEvent),
+    // spread over the last 90 days.
     const uint8_t types[4] = {ALARM_EVT_LOW, ALARM_EVT_HIGH, ALARM_EVT_TREND, ALARM_EVT_SENSOR};
     for (int i = 0; i < 15; i++) {
         AlarmEvent ev;
@@ -361,10 +358,6 @@ void handleTestClearHistory(AsyncWebServerRequest* request) {
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
-// Ręczne potwierdzenie awarii czujnika (SENSOR_FAULT to od 2026-07-14 alarm
-// krytyczny — latch, nie wraca sam nawet gdy czujnik znów daje poprawne
-// odczyty). Jeśli usterka faktycznie wciąż trwa, kolejny update() i tak
-// natychmiast zatrzaśnie ponownie.
 // Acknowledge the latched hardware alarm: clears only the blocks that work again
 void handleHwAlarmAck(AsyncWebServerRequest* request) {
     ackHwFaults();
@@ -377,12 +370,15 @@ void handleHwAlarmAck(AsyncWebServerRequest* request) {
     request->send(200, "application/json", out);
 }
 
+// Manual reset of the sensor fault (SENSOR_FAULT has been a critical alarm since 2026-07-14 —
+// latched, does not clear by itself even when the sensor reads fine again). If the fault still
+// lasts, the next update() latches it again at once.
 void handleResetSensorFault(AsyncWebServerRequest* request) {
     sendCmdResult(request, cmdSensorReset());
 }
 
-// Lock-PIN edycji GUI — osobny od hasła logowania (drugi zamek NA edycję,
-// wymaga już istniejącej sesji, nie jest zamiennikiem loginu).
+// GUI edit lock PIN — separate from the login password (a second lock ON editing, needs an
+// existing session, not a login replacement).
 void handleVerifyPin(AsyncWebServerRequest* request) {
     if (!request->hasParam("pin", true)) {
         request->send(400, "application/json", "{\"success\":false}");
@@ -397,7 +393,7 @@ void handleVerifyPin(AsyncWebServerRequest* request) {
 }
 
 // ============================================================
-// Auth + strony statyczne (bez zmian z ATO)
+// Auth + static pages (unchanged from ATO)
 // ============================================================
 
 void handleDashboard(AsyncWebServerRequest* request) {
